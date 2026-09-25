@@ -1,0 +1,1 @@
+# ISIT-project-gym-aggregator
