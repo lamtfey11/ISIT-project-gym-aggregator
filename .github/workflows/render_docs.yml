@@ -1,0 +1,38 @@
+name: Render C4 Diagrams
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Install Graphviz
+        run: sudo apt-get update && sudo apt-get install -y graphviz
+
+      - name: Download PlantUML
+        run: wget -q https://github.com/plantuml/plantuml/releases/download/v1.2025.4/plantuml-1.2025.4.jar -O plantuml.jar
+
+      - name: Render diagrams
+        run: |
+          mkdir -p docs/images
+          java -jar plantuml.jar -failfast2 -tpng -Sdpi=160 -o "$GITHUB_WORKSPACE/docs/images" "src/**.puml"
+
+      - name: Commit images
+        if: github.event_name == 'push'
+        run: |
+          git config --global user.name 'github-actions'
+          git config --global user.email 'actions@github.com'
+          git add docs/images/*.png || true
+          git commit -m 'docs: update diagrams [skip ci]' || echo 'nothing to commit'
+          git push || true
