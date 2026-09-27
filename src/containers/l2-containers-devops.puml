@@ -23,7 +23,7 @@ System_Boundary(fitness_system, "ИС-агрегатор фитнес-клубо
   Container(monitoring, "Система наблюдаемости", "Prometheus, Alertmanager, Grafana", "Собирает метрики и логи всех контейнеров")
 }
 
-System_Ext(payment_gateway, "Платёжный шлюз", "СБП, SberPay, AlfaPay и т. п.")
+System_Ext(payment_gateway, "Платёжная система", "СБП, SberPay, AlfaPay и т. п.")
 System_Ext(maps_service, "Картографический сервис", "Яндекс Карты API")
 System_Ext(notification_gateway, "Сервисы доставки уведомлений", "SMS-шлюз, FCM / APNs, SMTP")
 System_Ext(ci_cd, "Платформа CI/CD", "GitHub Actions + GHCR")
