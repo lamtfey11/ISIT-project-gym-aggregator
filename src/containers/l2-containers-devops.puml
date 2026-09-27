@@ -20,7 +20,7 @@ System_Boundary(fitness_system, "ИС-агрегатор фитнес-клубо
   ContainerQueue(message_broker, "Брокер сообщений", "RabbitMQ", "События записи и оплаты")
   ContainerDb(database, "Основная база данных", "PostgreSQL", "Все данные системы")
   ContainerDb(cache, "Кэш и хранилище сессий", "Redis", "Сессии, кэш расписания")
-  Container(monitoring, "Система наблюдаемости", "Prometheus, Alertmanager, Grafana", "Собирает метрики и логи всех контейнеров")
+  Container(monitoring, "Система наблюдаемости", "Prometheus, Alertmanager, Grafana, Loki", "Собирает метрики и логи всех контейнеров")
 }
 
 System_Ext(payment_gateway, "Платёжная система", "СБП, SberPay, AlfaPay и т. п.")
