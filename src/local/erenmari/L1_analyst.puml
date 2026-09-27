@@ -45,11 +45,4 @@ Rel(fitness_system, bi_platform, "Публикует витрины данных
 Rel(fitness_system, accounting_system, "Выгружает реестры начислений и акты по клубам за период", "HTTPS/REST, XML")
 Rel(fitness_system, notification_gateway, "Отправляет регламентные отчёты и оповещения об отклонении показателей", "SMTP/TLS, HTTPS/REST")
 
-' ==== ОПЦИОНАЛЬНО: жёсткая фиксация периметра (раскомментировать, если нам разрешат Lay_* :ззз ) ====
-' Lay_L(fitness_system, payment_gateway)
-' Lay_L(fitness_system, web_analytics)
-' Lay_R(fitness_system, bi_platform)
-' Lay_R(fitness_system, accounting_system)
-' Lay_R(fitness_system, notification_gateway)
-
 @enduml
