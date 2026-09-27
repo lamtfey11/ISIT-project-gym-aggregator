@@ -1,0 +1,14 @@
+' Контейнеры
+Container(reverse_proxy, "Обратный прокси", "Nginx", "Единая точка входа в систему: терминирование TLS, маршрутизация запросов к API, ограничение частоты запросов, раздача сборки веб-панели.")
+Container(monitoring, "Система наблюдаемости", "Prometheus, Alertmanager, Grafana, Loki", "Собирает метрики и логи контейнеров, хранит их историю, показывает панели состояния и рассылает оповещения о сбоях.")
+
+' Связи
+Rel(mobile_app, reverse_proxy, "Отправляет запросы к API", "HTTPS / JSON, порт 443")
+Rel(admin_web, reverse_proxy, "Отправляет запросы к API", "HTTPS / JSON, порт 443")
+Rel(reverse_proxy, api_gateway, "Проксирует запросы клиентов к API", "HTTP / JSON, порт 8000")
+Rel(monitoring, reverse_proxy, "Собирает метрики запросов", "HTTP, GET /metrics")
+Rel(monitoring, api_gateway, "Собирает метрики сервиса", "HTTP, GET /metrics")
+Rel(monitoring, occupancy_service, "Собирает метрики сервиса", "HTTP, GET /metrics")
+Rel(devops, monitoring, "Смотрит панели и логи, получает оповещения о сбоях", "HTTPS, E-mail / SMTP")
+Rel(ci_cd, api_gateway, "Разворачивает новый образ сервиса", "SSH, Docker Registry API")
+Rel(ci_cd, occupancy_service, "Разворачивает новый образ сервиса", "SSH, Docker Registry API")

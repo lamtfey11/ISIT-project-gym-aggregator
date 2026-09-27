@@ -1,0 +1,35 @@
+@startuml "Fitness Aggregator - System Context (DevOps)"
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Context.puml
+
+LAYOUT_WITH_LEGEND()
+
+title Диаграмма системного контекста ИС-агрегатора фитнес-клубов (фокус: DevOps)
+
+Person(visitor, "Посетитель", "Ищет клубы, записывается на занятия и оплачивает посещения")
+Person(club_admin, "Администратор клуба", "Ведёт расписание, отмечает посещения, получает выплаты")
+Person(operator, "Оператор платформы", "Модерирует клубы")
+Person(devops, "DevOps-инженер", "Выпускает релизы, следит за доступностью, реагирует на сбои")
+
+System(fitness_system, "ИС-агрегатор фитнес-клубов", "Поиск клубов, запись и оплата посещений, расчёты с клубами")
+
+System_Ext(payment_gateway, "Платёжная система", "Приём платежей, выплаты клубам")
+System_Ext(maps_service, "Картографический сервис", "Яндекс Карты API: карта, маршруты, геоданные")
+System_Ext(notification_gateway, "Сервисы доставки уведомлений", "SMS-шлюз, почтовый сервер, Push-уведомления")
+System_Ext(ci_cd, "Платформа CI/CD", "GitHub Actions и реестр образов GHCR: сборка, проверка, доставка")
+
+Rel(visitor, fitness_system, "Ищет клубы, записывается, оплачивает посещения", "HTTPS/JSON")
+Rel(club_admin, fitness_system, "Ведёт расписание, отмечает посещения по QR-коду", "HTTPS/JSON")
+Rel(operator, fitness_system, "Модерирует клубы, меняет комиссии", "HTTPS/JSON")
+Rel(devops, fitness_system, "Просматривает метрики, логи и состояние сервисов", "HTTPS")
+
+Rel(devops, ci_cd, "Настраивает конвейеры, утверждает выпуск релиза", "HTTPS / Git over SSH")
+Rel(ci_cd, fitness_system, "Разворачивает новые версии сервисов", "SSH / Docker Registry API")
+
+Rel(fitness_system, payment_gateway, "Создаёт платежи, запускает выплаты клубам", "HTTPS/REST")
+Rel(payment_gateway, fitness_system, "Сообщает статус платежа (вебхук)", "HTTPS/JSON")
+Rel(fitness_system, maps_service, "Геокодирует адреса клубов", "HTTPS/REST")
+Rel(fitness_system, notification_gateway, "Отправляет коды входа и напоминания", "HTTPS/REST, SMTP/TLS")
+Rel(notification_gateway, visitor, "Доставляет SMS и push-уведомления", "SMS, APNs, FCM")
+Rel(fitness_system, devops, "Оповещает о сбоях и превышении порогов метрик", "E-mail (Alertmanager, SMTP/TLS)")
+
+@enduml
