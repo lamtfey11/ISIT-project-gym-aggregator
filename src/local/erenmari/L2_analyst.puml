@@ -72,11 +72,4 @@ Rel(analytics_api, accounting_system, "Передаёт реестры начи�
 Rel(analytics_api, notification_gateway, "Отправляет регламентные отчёты и оповещения об отклонениях", "SMTP/TLS 465, HTTPS/REST")
 Rel(bi_platform, dwh, "Читает витрины для дашбордов", "SQL over TLS, TCP 9440")
 
-' ==== ОПЦИОНАЛЬНО: жёсткая фиксация периметра (раскомментировать, если нам разрешат Lay_* :ззз ) ====
-' Lay_L(etl_service, payment_gateway)
-' Lay_L(mobile_app, web_analytics)
-' Lay_R(club_web, bi_platform)
-' Lay_R(analytics_api, accounting_system)
-' Lay_R(analytics_api, notification_gateway)
-
 @enduml
