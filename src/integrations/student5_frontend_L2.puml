@@ -38,7 +38,7 @@ Rel(api_gateway, booking_service, "Передаёт запросы на созд
 Rel(api_gateway, access_service, "Запрашивает выпуск и проверку токена электронного пропуска", "gRPC/HTTP2")
 Rel(api_gateway, cache, "Читает и обновляет счётчики частоты запросов и сессии", "RESP/TCP")
 Rel(api_gateway, idp, "Передаёт запрос авторизации, получает подтверждённый профиль", "HTTPS, OAuth 2.0/OIDC")
-Rel_Back(api_gateway, payment, "Принимает асинхронное уведомление о результате оплаты", "HTTPS/JSON, webhook")
+Rel(payment, api_gateway, "Принимает асинхронное уведомление о результате оплаты", "HTTPS/JSON, webhook")
 Rel(catalog_service, database, "Читает карточки залов и выполняет геозапросы по радиусу", "SQL/TCP (JDBC, PostGIS)")
 Rel(catalog_service, cache, "Кэширует результаты геопоиска и карточки залов", "RESP/TCP")
 Rel(catalog_service, object_storage, "Сохраняет и отдаёт фотографии залов", "HTTPS (S3 API)")
