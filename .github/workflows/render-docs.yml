@@ -2,7 +2,7 @@ name: Render C4 diagrams
 
 on:
   push:
-    branches: ["**"]
+    branches: [main]
     paths:
       - "src/**/*.puml"
       - ".github/workflows/render-docs.yml"
