@@ -1,0 +1,64 @@
+@startuml "Fitness Aggregator - Container View (DevOps)"
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Container.puml
+
+LAYOUT_WITH_LEGEND()
+
+title Диаграмма контейнеров ИС-агрегатора малых фитнес-клубов (фокус: DevOps)
+
+Person(visitor, "Посетитель", "Ищет клубы, записывается и оплачивает посещения")
+Person(club_admin, "Администратор клуба", "Ведёт расписание и отмечает посещения")
+Person(operator, "Оператор платформы", "Модерирует клубы, настраивает комиссии")
+Person(devops, "DevOps-инженер", "Выпускает релизы, следит за доступностью")
+
+
+System_Boundary(fitness_system, "ИС-агрегатор малых фитнес-клубов") {
+  Container(mobile_app, "Мобильное приложение посетителя", "React Native / TypeScript", "Поиск, запись, оплата, QR-код")
+  Container(club_web, "Веб-кабинет клуба и оператора", "React / TypeScript (SPA)", "Расписание, посещения, модерация")
+  Container(reverse_proxy, "Обратный прокси", "Nginx", "Единая точка входа, TLS, маршрутизация")
+  Container(api_backend, "Основной бэкенд (API)", "Python / FastAPI", "Каталог, расписание, записи, цены и начисления клубам")
+  Container(integration_service, "Сервис интеграций и уведомлений", "Python / FastAPI, Celery", "Обмен с внешними системами")
+  ContainerQueue(message_broker, "Брокер сообщений", "RabbitMQ", "События записи и оплаты")
+  ContainerDb(database, "Основная база данных", "PostgreSQL", "Все данные системы")
+  ContainerDb(cache, "Кэш и хранилище сессий", "Redis", "Сессии, кэш расписания")
+  Container(monitoring, "Система наблюдаемости", "Prometheus, Alertmanager, Grafana", "Собирает метрики и логи всех контейнеров")
+}
+
+System_Ext(payment_gateway, "Платёжный шлюз", "СБП, SberPay, AlfaPay и т. п.")
+System_Ext(maps_service, "Картографический сервис", "Яндекс Карты API")
+System_Ext(notification_gateway, "Сервисы доставки уведомлений", "SMS-шлюз, FCM / APNs, SMTP")
+System_Ext(ci_cd, "Платформа CI/CD", "GitHub Actions + GHCR")
+
+Rel(visitor, mobile_app, "Ищет клуб, записывается, оплачивает", "GUI")
+Rel(club_admin, club_web, "Ведёт расписание, отмечает посещения", "HTTPS")
+Rel(operator, club_web, "Модерирует клубы, меняет комиссии", "HTTPS")
+Rel(devops, monitoring, "Смотрит панели и логи, получает оповещения Alertmanager", "HTTPS, E-mail (SMTP/TLS)")
+Rel(devops, ci_cd, "Запускает и утверждает выпуск релиза", "HTTPS / Git over SSH")
+
+Rel(mobile_app, reverse_proxy, "Вызывает API", "HTTPS/JSON, TCP 443")
+Rel(club_web, reverse_proxy, "Вызывает API", "HTTPS/JSON, TCP 443")
+Rel(mobile_app, maps_service, "Загружает карту и маршрут до клуба", "HTTPS")
+
+Rel(reverse_proxy, api_backend, "Проксирует запросы к API", "HTTP/JSON, TCP 8000")
+Rel(reverse_proxy, integration_service, "Передаёт входящие вебхуки", "HTTP/JSON, TCP 8002")
+
+Rel(api_backend, integration_service, "Запрашивает ссылку на оплату", "HTTP/JSON, TCP 8002")
+Rel(api_backend, database, "Читает и записывает данные", "SQL/TCP 5432")
+Rel(api_backend, cache, "Хранит сессии, кэширует расписание", "RESP/TCP 6379")
+Rel(api_backend, message_broker, "Публикует события записи", "AMQP, TCP 5672")
+Rel(integration_service, database, "Пишет статусы платежей и журнал обмена", "SQL/TCP 5432")
+Rel(message_broker, integration_service, "Отдаёт события из очередей", "AMQP, TCP 5672")
+
+Rel(integration_service, payment_gateway, "Создаёт платежи и выплаты клубам", "HTTPS/REST")
+Rel(payment_gateway, reverse_proxy, "Сообщает статус платежа (вебхук)", "HTTPS/JSON")
+Rel(integration_service, maps_service, "Геокодирует адреса клубов", "HTTPS/REST")
+Rel(integration_service, notification_gateway, "Отправляет SMS, push и письма", "HTTPS/REST, SMTP/TLS 465")
+Rel(notification_gateway, visitor, "Доставляет SMS и push-уведомления", "SMS, APNs, FCM")
+
+Rel(monitoring, reverse_proxy, "Собирает метрики запросов", "HTTP GET /metrics")
+Rel(monitoring, api_backend, "Собирает метрики", "HTTP GET /metrics")
+Rel(monitoring, integration_service, "Собирает метрики", "HTTP GET /metrics")
+
+Rel(ci_cd, api_backend, "Разворачивает новые образы всех сервисов", "SSH / Docker Registry API")
+
+
+@enduml
