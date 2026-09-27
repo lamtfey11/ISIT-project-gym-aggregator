@@ -24,6 +24,7 @@ env:
   PLANTUML_VERSION: "1.2025.4"
   SRC_DIR: src
   OUT_DIR: docs/images
+  DICT_DIR: src/integrations
 
 jobs:
   render:
@@ -52,7 +53,6 @@ jobs:
 
       - name: Проверить правила оформления (запрет Rel_*, Lay_*, skinparam)
         run: |
-          # Библиотеку C4, если она лежит в src/core, не проверяем
           if grep -rnE --include='*.puml' --exclude-dir=core \
                '\b(Rel_[A-Za-z]+|Lay_[A-Za-z]+)\s*\(|^\s*skinparam\b' "$SRC_DIR"; then
             echo "::error::Найдены запрещённые методичкой макросы. Используйте только Rel()."
@@ -66,25 +66,24 @@ jobs:
           while IFS= read -r -d '' file; do
             echo "Проверка: $file"
             if ! java -jar plantuml.jar -checkonly "$file" < /dev/null; then
-              # Повторный прогон только для того, чтобы вывести номер строки с ошибкой
               detail=$(java -jar plantuml.jar -tpng -o /tmp/plantuml-err "$file" < /dev/null 2>&1 | grep -i 'error line' || true)
               echo "::error file=$file::Синтаксическая ошибка PlantUML. ${detail}"
               status=1
             fi
-          done < <(find "$SRC_DIR" -name '*.puml' -not -path '*/core/*' -print0)
+          done < <(find "$SRC_DIR" -name '*.puml' -not -path '*/core/*' -not -path "$DICT_DIR/*" -print0)
           exit $status
 
       - name: Отрисовать PNG и SVG
         run: |
-          # Структура папок сохраняется: src/local/<автор>/x.puml -> docs/images/local/<автор>/x.png
           while IFS= read -r -d '' file; do
             rel="${file#"$SRC_DIR"/}"
             out="$OUT_DIR/${rel%.puml}"
             mkdir -p "$(dirname "$out")"
-            java -jar plantuml.jar -tpng -pipe < "$file" > "$out.png"
-            java -jar plantuml.jar -tsvg -pipe < "$file" > "$out.svg"
+            dir="$(dirname "$file")"; name="$(basename "$file")"
+            (cd "$dir" && java -jar "$GITHUB_WORKSPACE/plantuml.jar" -tpng -pipe < "$name") > "$out.png"
+            (cd "$dir" && java -jar "$GITHUB_WORKSPACE/plantuml.jar" -tsvg -pipe < "$name") > "$out.svg"
             echo "Готово: $out.png, $out.svg"
-          done < <(find "$SRC_DIR" -name '*.puml' -not -path '*/core/*' -print0)
+          done < <(find "$SRC_DIR" -name '*.puml' -not -path '*/core/*' -not -path "$DICT_DIR/*" -print0)
 
       - name: Сохранить диаграммы как артефакт сборки
         uses: actions/upload-artifact@v4
