@@ -5,12 +5,12 @@ on:
     branches: [main]
     paths:
       - "src/**/*.puml"
-      - ".github/workflows/render-docs.yml"
+      - ".github/workflows/render_docs.yml"
   pull_request:
     branches: [main]
     paths:
       - "src/**/*.puml"
-      - ".github/workflows/render-docs.yml"
+      - ".github/workflows/render_docs.yml"
   workflow_dispatch:
 
 permissions:
@@ -23,7 +23,7 @@ concurrency:
 env:
   PLANTUML_VERSION: "1.2025.4"
   SRC_DIR: src
-  OUT_DIR: images
+  OUT_DIR: docs/images
 
 jobs:
   render:
@@ -76,7 +76,7 @@ jobs:
 
       - name: Отрисовать PNG и SVG
         run: |
-          # Структура папок сохраняется: src/local/<автор>/x.puml -> images/local/<автор>/x.png
+          # Структура папок сохраняется: src/local/<автор>/x.puml -> docs/images/local/<автор>/x.png
           while IFS= read -r -d '' file; do
             rel="${file#"$SRC_DIR"/}"
             out="$OUT_DIR/${rel%.puml}"
