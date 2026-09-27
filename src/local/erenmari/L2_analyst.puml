@@ -1,0 +1,82 @@
+@startuml "Fitness Aggregator - Container View (Analyst)"
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Container.puml
+
+LAYOUT_WITH_LEGEND()
+
+title Диаграмма контейнеров ИС-агрегатора фитнес-клубов (фокус: аналитика и отчётность)
+
+' ==== ПОЛЬЗОВАТЕЛИ (верхний ряд диаграммы) ====
+Person(visitor, "Посетитель", "Ищет клубы, записывается и оплачивает посещения")
+Person(club_admin, "Администратор клуба", "Ведёт расписание, смотрит отчёты по своему клубу")
+Person(operator, "Оператор платформы", "Модерирует клубы, работает со сводными показателями")
+Person(analyst, "Аналитик платформы", "Проектирует витрины и показатели, готовит отчётность")
+
+' ==== ВНЕШНИЕ СИСТЕМЫ: ЛЕВЫЙ ПЕРИМЕТР (источники данных) ====
+System_Ext(payment_gateway, "Платёжная система", "Реестры платежей и выплат клубам")
+System_Ext(web_analytics, "Сервис веб- и мобильной аналитики", "Яндекс Метрика / AppMetrica")
+
+System_Boundary(fitness_system, "ИС-агрегатор фитнес-клубов") {
+
+  ' ---- Клиентские приложения (верх границы) ----
+  Container(mobile_app, "Мобильное приложение посетителя", "React Native / TypeScript", "Поиск, запись, оплата; отправляет события о действиях пользователя")
+  Container(club_web, "Веб-кабинет клуба и оператора", "React / TypeScript (SPA)", "Расписание и модерация; раздел «Отчёты и аналитика» с графиками и выгрузками")
+
+  ' ---- Шлюз и серверные сервисы (центр границы) ----
+  Container(reverse_proxy, "Обратный прокси", "Nginx", "Единая точка входа, TLS-терминация, маршрутизация запросов")
+  Container(api_backend, "Основной бэкенд (API)", "Python / FastAPI", "Операционное ядро: каталог, записи, оплаты, начисления клубам")
+  Container(analytics_api, "Сервис отчётности", "Python / FastAPI, pandas", "Считает показатели по витринам, собирает регламентные отчёты и выгрузки XLSX/CSV")
+  Container(etl_service, "Сервис загрузки данных (ETL)", "Python / Apache Airflow, pandas", "По расписанию забирает данные из БД, брокера и внешних систем, чистит и грузит в витрины")
+
+  ' ---- Хранилища и брокер (низ границы) ----
+  ContainerQueue(message_broker, "Брокер сообщений", "RabbitMQ", "Поток событий о записях, визитах и оплатах")
+  ContainerDb(database, "Операционная база данных", "PostgreSQL", "Транзакционные данные: клубы, занятия, записи, платежи")
+  ContainerDb(dwh, "Аналитическое хранилище и витрины", "ClickHouse", "Денормализованные витрины: загрузка клубов, воронка записей, выручка и комиссии")
+  ContainerDb(report_storage, "Хранилище готовых отчётов", "MinIO (S3-совместимое)", "Сформированные файлы отчётов и их версии")
+}
+
+' ==== ВНЕШНИЕ СИСТЕМЫ: ПРАВЫЙ ПЕРИМЕТР (потребители данных) ====
+System_Ext(bi_platform, "BI-платформа", "Yandex DataLens")
+System_Ext(accounting_system, "Система бухгалтерского учёта", "1С:Бухгалтерия")
+System_Ext(notification_gateway, "Сервисы доставки уведомлений", "SMTP, SMS-шлюз, FCM / APNs")
+
+' ==== СВЯЗИ «ПОЛЬЗОВАТЕЛЬ -> КОНТЕЙНЕР» (задают верхний ряд) ====
+Rel(visitor, mobile_app, "Ищет клуб, записывается, оплачивает посещение", "GUI")
+Rel(club_admin, club_web, "Смотрит отчёты по загрузке зала и начислениям, выгружает файлы", "HTTPS")
+Rel(operator, club_web, "Смотрит сводные показатели платформы по всем клубам", "HTTPS")
+Rel(analyst, club_web, "Проверяет витрины, задаёт параметры регламентных отчётов", "HTTPS")
+Rel(analyst, bi_platform, "Строит ad-hoc дашборды поверх витрин", "HTTPS")
+Rel(notification_gateway, club_admin, "Доставляет отчёт за период", "E-mail")
+
+' ==== ВНУТРЕННИЕ СВЯЗИ: ФРОНТ -> ШЛЮЗ -> СЕРВИСЫ ====
+Rel(mobile_app, reverse_proxy, "Вызывает API и отправляет события о действиях", "HTTPS/JSON, TCP 443")
+Rel(club_web, reverse_proxy, "Запрашивает показатели и отчёты", "HTTPS/JSON, TCP 443")
+Rel(reverse_proxy, api_backend, "Проксирует операционные запросы", "HTTP/JSON, TCP 8000")
+Rel(reverse_proxy, analytics_api, "Проксирует запросы отчётности", "HTTP/JSON, TCP 8003")
+
+' ==== ВНУТРЕННИЕ СВЯЗИ: СЕРВИСЫ -> ХРАНИЛИЩА (задают нижний ряд) ====
+Rel(api_backend, database, "Читает и записывает операционные данные", "SQL/TCP 5432")
+Rel(api_backend, message_broker, "Публикует события записей, визитов и оплат", "AMQP, TCP 5672")
+Rel(etl_service, database, "Инкрементально выгружает операционные данные", "SQL/TCP 5432")
+Rel(message_broker, etl_service, "Отдаёт события из очереди для потоковой загрузки", "AMQP, TCP 5672")
+Rel(etl_service, dwh, "Загружает очищенные данные и пересчитывает витрины", "HTTP/Native protocol, TCP 8123")
+Rel(analytics_api, dwh, "Выполняет аналитические запросы к витринам", "HTTP/Native protocol, TCP 8123")
+Rel(analytics_api, report_storage, "Сохраняет и отдаёт файлы отчётов", "S3 API, HTTPS")
+
+' ==== СВЯЗИ С ВНЕШНИМИ СИСТЕМАМИ: ЛЕВЫЙ ПЕРИМЕТР ====
+Rel(mobile_app, web_analytics, "Отправляет события сессий и экранов", "HTTPS/JSON")
+Rel(etl_service, payment_gateway, "Забирает реестры платежей и выплат для сверки", "HTTPS/REST")
+Rel(etl_service, web_analytics, "Забирает агрегаты по трафику и конверсии", "HTTPS/REST")
+
+' ==== СВЯЗИ С ВНЕШНИМИ СИСТЕМАМИ: ПРАВЫЙ ПЕРИМЕТР ====
+Rel(analytics_api, accounting_system, "Передаёт реестры начислений и акты по клубам", "HTTPS/REST, XML")
+Rel(analytics_api, notification_gateway, "Отправляет регламентные отчёты и оповещения об отклонениях", "SMTP/TLS 465, HTTPS/REST")
+Rel(bi_platform, dwh, "Читает витрины для дашбордов", "SQL over TLS, TCP 9440")
+
+' ==== ОПЦИОНАЛЬНО: жёсткая фиксация периметра (раскомментировать, если нам разрешат Lay_* :ззз ) ====
+' Lay_L(etl_service, payment_gateway)
+' Lay_L(mobile_app, web_analytics)
+' Lay_R(club_web, bi_platform)
+' Lay_R(analytics_api, accounting_system)
+' Lay_R(analytics_api, notification_gateway)
+
+@enduml
