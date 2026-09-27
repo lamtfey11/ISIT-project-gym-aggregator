@@ -1,0 +1,106 @@
+name: Render C4 diagrams
+
+on:
+  push:
+    branches: ["**"]
+    paths:
+      - "src/**/*.puml"
+      - ".github/workflows/render-docs.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "src/**/*.puml"
+      - ".github/workflows/render-docs.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: render-docs-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PLANTUML_VERSION: "1.2025.4"
+  SRC_DIR: src
+  OUT_DIR: images
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Получить код репозитория
+        uses: actions/checkout@v4
+
+      - name: Установить Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Установить Graphviz и шрифты с кириллицей
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends graphviz fonts-dejavu-core
+
+      - name: Скачать PlantUML
+        run: |
+          curl -fsSL -o plantuml.jar \
+            "https://github.com/plantuml/plantuml/releases/download/v${PLANTUML_VERSION}/plantuml-${PLANTUML_VERSION}.jar"
+          java -jar plantuml.jar -version < /dev/null
+
+      - name: Проверить правила оформления (запрет Rel_*, Lay_*, skinparam)
+        run: |
+          # Библиотеку C4, если она лежит в src/core, не проверяем
+          if grep -rnE --include='*.puml' --exclude-dir=core \
+               '\b(Rel_[A-Za-z]+|Lay_[A-Za-z]+)\s*\(|^\s*skinparam\b' "$SRC_DIR"; then
+            echo "::error::Найдены запрещённые методичкой макросы. Используйте только Rel()."
+            exit 1
+          fi
+          echo "Запрещённых макросов нет"
+
+      - name: Проверить синтаксис диаграмм
+        run: |
+          status=0
+          while IFS= read -r -d '' file; do
+            echo "Проверка: $file"
+            if ! java -jar plantuml.jar -checkonly "$file" < /dev/null; then
+              # Повторный прогон только для того, чтобы вывести номер строки с ошибкой
+              detail=$(java -jar plantuml.jar -tpng -o /tmp/plantuml-err "$file" < /dev/null 2>&1 | grep -i 'error line' || true)
+              echo "::error file=$file::Синтаксическая ошибка PlantUML. ${detail}"
+              status=1
+            fi
+          done < <(find "$SRC_DIR" -name '*.puml' -not -path '*/core/*' -print0)
+          exit $status
+
+      - name: Отрисовать PNG и SVG
+        run: |
+          # Структура папок сохраняется: src/local/<автор>/x.puml -> images/local/<автор>/x.png
+          while IFS= read -r -d '' file; do
+            rel="${file#"$SRC_DIR"/}"
+            out="$OUT_DIR/${rel%.puml}"
+            mkdir -p "$(dirname "$out")"
+            java -jar plantuml.jar -tpng -pipe < "$file" > "$out.png"
+            java -jar plantuml.jar -tsvg -pipe < "$file" > "$out.svg"
+            echo "Готово: $out.png, $out.svg"
+          done < <(find "$SRC_DIR" -name '*.puml' -not -path '*/core/*' -print0)
+
+      - name: Сохранить диаграммы как артефакт сборки
+        uses: actions/upload-artifact@v4
+        with:
+          name: c4-diagrams
+          path: ${{ env.OUT_DIR }}/
+
+      - name: Закоммитить диаграммы в main
+        if: github.event_name != 'pull_request'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "$OUT_DIR"
+          if git diff --cached --quiet; then
+            echo "Диаграммы не изменились"
+          else
+            git commit -m "docs: обновление диаграмм C4 [skip ci]"
+            git push
+          fi
