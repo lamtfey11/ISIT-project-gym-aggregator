@@ -1,0 +1,118 @@
+@startuml main_containers
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Container.puml
+
+LAYOUT_WITH_LEGEND()
+title Сводная диаграмма контейнеров ИС "Агрегатор фитнес-клубов"
+
+' === ГЛОБАЛЬНЫЕ АКТОРЫ (зона ответственности Тимлида) ===
+Person(client, "Клиент", "Посетитель фитнес-зала: ищет зал рядом, покупает абонемент, проходит в зал по QR-пропуску")
+Person(gym_admin, "Администратор зала", "Сотрудник партнёрского зала: ведёт карточку, тарифы и расписание, смотрит отчёты")
+Person(platform_operator, "Оператор платформы", "Сотрудник платформы: модерирует залы, настраивает тарифы и комиссии, обрабатывает обращения")
+Person(analyst, "Аналитик платформы", "Проектирует показатели и витрины, готовит отчётность")
+Person(devops, "DevOps-инженер", "Выпускает релизы, следит за доступностью и метриками")
+
+' === ГЛОБАЛЬНЫЕ ВНЕШНИЕ СИСТЕМЫ (зона ответственности Тимлида) ===
+System_Ext(payment_gateway, "Платёжный шлюз", "Эквайринг с поддержкой маркетплейс-схемы: платежи, возвраты, выплаты залам")
+System_Ext(maps_service, "Картографический сервис", "Яндекс Карты / 2ГИС: карта, геокодирование, маршруты")
+System_Ext(notification_gateway, "Сервисы доставки уведомлений", "FCM / APNs, SMS-шлюз, SMTP-сервер")
+System_Ext(access_control, "СКУД и датчики залов", "Турникеты и считыватели на стороне партнёра")
+System_Ext(idp, "Провайдер идентификации", "VK ID / Sber ID: OAuth 2.0 / OIDC")
+System_Ext(bi_platform, "BI-платформа", "Yandex DataLens: дашборды поверх витрин")
+System_Ext(accounting_system, "Система бухгалтерского учёта", "1С:Бухгалтерия: акты и реестры начислений")
+
+System_Boundary(gym_aggregator, "ИС-агрегатор фитнес-клубов") {
+  ' === ТИМЛИД: структура СУБД ===
+  ContainerDb(database, "Реляционная СУБД", "PostgreSQL 16 + PostGIS 3", "Основное хранилище: пользователи и роли, залы и геоиндексы, тарифы, абонементы, заказы, платежи, посещения, журнал операций.")
+  ' === FRONTEND: клиентские приложения ===
+  Container(mobile_app, "Мобильное приложение клиента", "React Native / TypeScript", "Геопоиск залов на карте, каталог и расписание, покупка абонемента, QR-пропуск для прохода в зал, push-уведомления.")
+  Container(admin_web, "Веб-панель администрирования", "React 18 / TypeScript, Vite (SPA)", "Рабочее место администратора зала, оператора платформы и аналитика (доступ по ролям): карточка зала, тарифы, модерация, обращения и возвраты, отчёты.")
+  ' === BACKEND: серверные сервисы ===
+  Container(auth_service, "Сервис авторизации", "Python 3.12 / FastAPI", "Регистрация и аутентификация, выпуск и проверка JWT-токенов, разграничение прав по ролям, вход через внешнего провайдера идентификации.")
+  Container(core_api, "Сервис бизнес-логики", "Python 3.12 / FastAPI, SQLAlchemy", "Ядро предметной области: каталог и геопоиск залов, тарифы, абонементы и заказы, отзывы, модерация, учёт посещений.")
+  Container(integration_service, "Сервис интеграций и уведомлений", "Python 3.12 / FastAPI, Celery", "Обмен с внешними системами: платежи, возвраты и выплаты залам, приём webhook, геокодирование адресов, рассылка push, SMS и e-mail.")
+  Container(iot_service, "Сервис допуска и загруженности", "Python 3.12 / FastAPI, asyncio, aiomqtt", "Приём событий СКУД по MQTT, выдача и проверка QR-пропусков, расчёт индекса загруженности зала по 10-балльной шкале.")
+  ' === ANALYTICS: отчётность, ETL, витрины ===
+  Container(analytics_service, "Сервис отчётности", "Python 3.12 / FastAPI, pandas", "Считает показатели по витринам, собирает регламентные отчёты и выгрузки XLSX и CSV, готовит реестры начислений для бухгалтерии.")
+  Container(etl_service, "Сервис загрузки данных (ETL)", "Python 3.12 / Apache Airflow, pandas", "По расписанию забирает операционные данные и поток событий, очищает их и загружает в витрины.")
+  ContainerDb(dwh, "Аналитическое хранилище и витрины", "ClickHouse", "Денормализованные витрины: загрузка залов, воронка покупок, выручка и комиссии.")
+  ' === DEVOPS: шлюз, брокеры, кэш, хранилище, наблюдаемость ===
+  Container(api_gateway, "API-шлюз", "Nginx", "Единая точка входа: терминация TLS 1.3, маршрутизация, проверка токена через сервис авторизации, ограничение частоты запросов, приём webhook и запросов BI.")
+  ContainerQueue(message_broker, "Брокер сообщений", "RabbitMQ 3", "Асинхронный обмен событиями между сервисами: оплата, подписки, проходы, готовность отчётов.")
+  ContainerQueue(mqtt_broker, "MQTT-брокер", "Eclipse Mosquitto 2.0", "Принимает события и запросы СКУД по топикам gym/{gym_id}/access, передаёт команды допуска турникетам.")
+  ContainerDb(cache, "Кэш и хранилище сессий", "Redis 7", "Кэш геопоиска, актуальный индекс загруженности, сессии и токены, короткоживущие токены пропусков.")
+  ContainerDb(object_storage, "Объектное хранилище", "MinIO (S3 API)", "Фотографии залов, аватары, документы партнёров, файлы готовых отчётов.")
+  Container(monitoring, "Система наблюдаемости", "Prometheus, Alertmanager, Grafana, Loki", "Собирает метрики и логи контейнеров, строит панели, рассылает оповещения об инцидентах.")
+}
+
+' === СВЯЗИ ВНУТРИ ЗОН ===
+Rel(core_api, integration_service, "Запрашивает создание платежа, возврат и геокодирование адреса", "HTTP/JSON, TCP 8002")
+Rel(analytics_service, dwh, "Выполняет аналитические запросы к витринам", "HTTP, TCP 8123")
+Rel(etl_service, dwh, "Загружает очищенные данные и пересчитывает витрины", "HTTP, TCP 8123")
+Rel(monitoring, api_gateway, "Опрашивает метрики шлюза", "HTTP GET /metrics")
+Rel(monitoring, message_broker, "Опрашивает метрики очередей", "HTTP GET /metrics")
+
+' === СВЯЗИ: АКТОРЫ И ПРИЛОЖЕНИЯ (стрелка = инициатор сессии) ===
+Rel(client, mobile_app, "Ищет зал рядом, покупает абонемент, предъявляет QR-пропуск", "Android / iOS")
+Rel(gym_admin, admin_web, "Ведёт карточку, тарифы и расписание зала, смотрит отчёты", "HTTPS")
+Rel(platform_operator, admin_web, "Модерирует залы, настраивает тарифы и комиссии, обрабатывает обращения", "HTTPS")
+Rel(analyst, admin_web, "Проверяет витрины, задаёт параметры регламентных отчётов", "HTTPS")
+Rel(analyst, bi_platform, "Строит ad-hoc дашборды поверх витрин", "HTTPS")
+Rel(devops, monitoring, "Смотрит панели и логи, реагирует на оповещения", "HTTPS")
+
+Rel(notification_gateway, client, "Доставляет push- и SMS-уведомления", "FCM/APNs, SMS")
+Rel(notification_gateway, gym_admin, "Доставляет отчёт по загрузке и продажам зала", "E-mail (SMTP)")
+Rel(notification_gateway, analyst, "Доставляет оповещения о сбое расчёта витрин", "E-mail (SMTP)")
+Rel(notification_gateway, devops, "Доставляет оповещения об инцидентах", "E-mail (SMTP)")
+
+' === СВЯЗИ: КЛИЕНТСКИЕ ПРИЛОЖЕНИЯ ===
+Rel(mobile_app, api_gateway, "Запрашивает каталог, оформляет заказ, получает токен пропуска", "HTTPS/JSON (REST), TCP 443")
+Rel(admin_web, api_gateway, "Передаёт изменения карточки, решения модерации, запрашивает отчёты", "HTTPS/JSON (REST), TCP 443")
+Rel(mobile_app, maps_service, "Загружает тайлы карты и строит маршрут до зала", "HTTPS/JSON")
+Rel(mobile_app, payment_gateway, "Передаёт данные карты в токенизированном виде через платёжный SDK", "HTTPS/JSON, SDK")
+
+' === СВЯЗИ: ВХОД ИЗ ВНЕШНЕГО ПЕРИМЕТРА (открыты только 443 и 8883) ===
+Rel(payment_gateway, api_gateway, "Сообщает статус платежа (webhook)", "HTTPS/JSON, TCP 443")
+Rel(bi_platform, api_gateway, "Читает витрины данных для дашбордов (только чтение)", "SQL over HTTPS, TCP 443")
+Rel(access_control, mqtt_broker, "Публикует запросы валидации пропуска и события прохода, получает команды допуска", "MQTTS / TLS, порт 8883")
+
+' === СВЯЗИ: ШЛЮЗ -> СЕРВИСЫ ===
+Rel(api_gateway, auth_service, "Проверяет токен и права пользователя, выдаёт токены", "HTTP/JSON, TCP 8001")
+Rel(api_gateway, core_api, "Проксирует запросы каталога, заказов, подписок и модерации", "HTTP/JSON, TCP 8000")
+Rel(api_gateway, integration_service, "Передаёт входящие webhook платёжной системы", "HTTP/JSON, TCP 8002")
+Rel(api_gateway, analytics_service, "Проксирует запросы отчётности", "HTTP/JSON, TCP 8003")
+Rel(api_gateway, iot_service, "Проксирует запросы выдачи и проверки QR-пропуска", "HTTP/JSON, TCP 8004")
+Rel(api_gateway, dwh, "Проксирует запросы BI к витринам (только чтение)", "HTTP, TCP 8123")
+
+' === СВЯЗИ: BACKEND -> ДАННЫЕ И ИНФРАСТРУКТУРА ===
+Rel(auth_service, database, "Читает и записывает профили пользователей и роли", "SQL/TCP, TCP 5432")
+Rel(auth_service, cache, "Хранит активные сессии и выпущенные токены", "RESP/TCP, TCP 6379")
+Rel(auth_service, idp, "Обменивает код авторизации на подтверждённый профиль", "HTTPS, OAuth 2.0 / OIDC")
+Rel(core_api, database, "Читает и записывает каталог, тарифы, абонементы, посещения, выполняет геозапросы", "SQL/TCP, TCP 5432")
+Rel(core_api, cache, "Кэширует геопоиск, читает индекс загруженности", "RESP/TCP, TCP 6379")
+Rel(core_api, object_storage, "Сохраняет и отдаёт фотографии залов", "HTTPS (S3 API), TCP 9000")
+Rel(core_api, message_broker, "Публикует события заказов и подписок, получает события платежей", "AMQP, TCP 5672")
+Rel(core_api, iot_service, "Передаёт ручные отметки посещений, запрашивает пересчёт индекса", "HTTP/JSON, TCP 8004")
+Rel(integration_service, database, "Пишет статусы платежей и журнал обмена", "SQL/TCP, TCP 5432")
+Rel(integration_service, message_broker, "Публикует события платежей, получает события для уведомлений", "AMQP, TCP 5672")
+Rel(integration_service, payment_gateway, "Создаёт платежи, оформляет возвраты и выплаты залам", "HTTPS/REST")
+Rel(integration_service, maps_service, "Геокодирует адреса залов", "HTTPS/REST")
+Rel(integration_service, notification_gateway, "Отправляет push, SMS и e-mail на доставку", "HTTPS/REST, SMTP/TLS 465")
+Rel(iot_service, mqtt_broker, "Подписывается на топики gym/{gym_id}/access, публикует команды допуска", "MQTT / TCP, порт 1883, внутренняя сеть")
+Rel(iot_service, database, "Сохраняет нормализованные события прохода и историю загруженности", "SQL/TCP, TCP 5432")
+Rel(iot_service, cache, "Публикует индекс загруженности, хранит токены пропусков", "RESP/TCP, TCP 6379")
+Rel(iot_service, message_broker, "Публикует события прохода, подписывается на активацию пропусков", "AMQP, TCP 5672")
+
+' === СВЯЗИ: ANALYTICS ===
+Rel(etl_service, database, "Инкрементально выгружает операционные данные", "SQL/TCP, TCP 5432")
+Rel(etl_service, message_broker, "Читает поток событий для загрузки в витрины", "AMQP, TCP 5672")
+Rel(analytics_service, object_storage, "Сохраняет и отдаёт файлы отчётов", "HTTPS (S3 API), TCP 9000")
+Rel(analytics_service, message_broker, "Публикует событие о готовности отчёта", "AMQP, TCP 5672")
+Rel(analytics_service, accounting_system, "Передаёт реестры начислений и акты по залам", "HTTPS/REST, XML")
+
+' === СВЯЗИ: НАБЛЮДАЕМОСТЬ (показаны ключевые цели опроса, полный перечень - в таблице контейнеров) ===
+Rel(monitoring, core_api, "Опрашивает метрики сервиса", "HTTP GET /metrics")
+Rel(monitoring, integration_service, "Опрашивает метрики сервиса", "HTTP GET /metrics")
+Rel(monitoring, database, "Опрашивает метрики СУБД", "HTTP GET /metrics")
+Rel(monitoring, notification_gateway, "Отправляет оповещения об инцидентах", "SMTP/TLS, TCP 465")
+
+@enduml
