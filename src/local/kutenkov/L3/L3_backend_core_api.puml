@@ -1,0 +1,65 @@
+@startuml L3_backend_core
+' Подключаем стандартный макрос для диаграммы компонентов
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Component.puml
+
+LAYOUT_WITH_LEGEND()
+
+title Диаграмма компонентов C4 (Level 3) — Сервис бизнес-логики (core_api)
+
+' ВНЕШНИЕ СИСТЕМЫ И КОНТЕЙНЕРЫ (Смежные узлы) 
+Container(api_gateway, "API-шлюз", "Nginx", "Единая точка входа, маршрутизация запросов к бэкенду")
+Container(integration_service, "Сервис интеграций", "Python / FastAPI", "Единый шлюз для работы с внешними провайдерами")
+Container(iot_service, "Сервис допуска и загруженности", "Python / FastAPI", "Управляет СКУД и расчетом загруженности")
+
+ContainerDb(database, "Реляционная СУБД", "PostgreSQL 16 + PostGIS 3", "Основное хранилище (схемы залов, абонементы, тарифы)")
+ContainerDb(cache, "Кэш и хранилище сессий", "Redis 7", "Кэш геопоиска и индекс загруженности")
+ContainerDb(object_storage, "Объектное хранилище", "MinIO (S3 API)", "Фотографии залов")
+ContainerQueue(message_broker, "Брокер сообщений", "RabbitMQ 3", "Асинхронная передача событий")
+
+' ГРАНИЦА НАШЕГО КОНТЕЙНЕРА
+Container_Boundary(core_api, "Сервис бизнес-логики (core_api)") {
+    
+    Component(catalog_comp, "Модуль каталога и геопоиска", "Python / FastAPI, SQLAlchemy", "Обрабатывает гео-запросы, выдает карточки залов и их расписание")
+    
+    Component(tariff_comp, "Модуль тарификации", "Python / FastAPI, SQLAlchemy", "Управляет справочником тарифов (CRUD для администраторов)")
+    
+    Component(booking_comp, "Модуль бронирования", "Python / FastAPI, SQLAlchemy", "Оформляет заказы, управляет подписками и списывает занятия по факту прохода")
+    
+    Component(payment_comp, "Модуль оплаты", "Python", "Рассчитывает итоговую стоимость корзины, формирует счет на оплату")
+    
+    Component(review_comp, "Модуль отзывов и рейтингов", "Python / FastAPI, SQLAlchemy", "Принимает и модерирует отзывы клиентов")
+}
+
+'СВЯЗИ (ВХОДЯЩИЕ ИЗ ШЛЮЗА) 
+Rel(api_gateway, catalog_comp, "Запросы каталога и поиска", "HTTP/JSON")
+Rel(api_gateway, tariff_comp, "Управление тарифами (от админов)", "HTTP/JSON")
+Rel(api_gateway, booking_comp, "Запросы на покупку абонементов", "HTTP/JSON")
+Rel(api_gateway, review_comp, "Публикация и модерация отзывов", "HTTP/JSON")
+
+'ВНУТРИПРОЦЕССНЫЕ СВЯЗИ МЕЖДУ КОМПОНЕНТАМИ
+Rel(booking_comp, tariff_comp, "Запрашивает актуальную стоимость и правила", "Python Call")
+Rel(booking_comp, catalog_comp, "Проверяет доступность мест в зале", "Python Call")
+Rel(booking_comp, payment_comp, "Инициирует расчет корзины", "Python Call")
+Rel(review_comp, catalog_comp, "Обновляет средний рейтинг зала", "Python Call")
+
+'СВЯЗИ (ИСХОДЯЩИЕ В ИНФРАСТРУКТУРУ И СМЕЖНЫЕ СЕРВИСЫ)
+' Каталог
+Rel(catalog_comp, database, "Читает залы и геоиндексы", "SQL/TCP")
+Rel(catalog_comp, cache, "Читает индекс загруженности", "RESP/TCP")
+Rel(catalog_comp, object_storage, "Читает фото залов", "HTTPS (S3 API)")
+
+' Тарифы
+Rel(tariff_comp, database, "Читает/пишет структуру тарифов", "SQL/TCP")
+
+' Бронирование
+Rel(booking_comp, database, "Сохраняет абонементы и заказы", "SQL/TCP")
+Rel(booking_comp, message_broker, "Публикует события о покупках", "AMQP")
+Rel(booking_comp, iot_service, "Передаёт ручные отметки посещений", "HTTP/JSON")
+
+' Оплата
+Rel(payment_comp, integration_service, "Запрашивает создание платежа в эквайринге", "HTTP/JSON")
+
+' Отзывы
+Rel(review_comp, database, "Сохраняет отзывы", "SQL/TCP")
+
+@enduml
