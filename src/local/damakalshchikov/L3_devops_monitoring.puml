@@ -1,0 +1,65 @@
+@startuml L3_devops_monitoring
+' Зона ответственности: DevOps-инженер
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Component.puml
+
+LAYOUT_WITH_LEGEND()
+
+title Диаграмма компонентов (Level 3) — Система наблюдаемости (monitoring)
+
+' === ПОЛЬЗОВАТЕЛИ ===
+Person(devops, "DevOps-инженер", "Выпускает релизы, следит за доступностью и метриками")
+
+' === ВНЕШНИЕ СИСТЕМЫ ===
+System_Ext(notification_gateway, "Сервисы доставки уведомлений", "SMTP-сервер: доставка e-mail")
+
+' === НАБЛЮДАЕМЫЕ КОНТЕЙНЕРЫ ===
+Container(api_gateway, "API-шлюз", "Nginx", "Единая точка входа, отдаёт метрики и журналы доступа")
+Container(core_api, "Сервис бизнес-логики", "Python 3.12 / FastAPI", "Отдаёт метрики приложения")
+Container(integration_service, "Сервис интеграций и уведомлений", "Python 3.12 / FastAPI, Celery", "Отдаёт метрики приложения и очередей задач")
+ContainerDb(database, "Реляционная СУБД", "PostgreSQL 16 + PostGIS 3", "Метрики через postgres_exporter")
+ContainerQueue(message_broker, "Брокер сообщений", "RabbitMQ 3", "Метрики через встроенный плагин Prometheus")
+
+' === ГРАНИЦА КОНТЕЙНЕРА ===
+Container_Boundary(monitoring, "Система наблюдаемости (monitoring)") {
+
+    Component(scrape_comp, "Сборщик метрик", "Prometheus / scrape manager, service discovery", "По расписанию опрашивает /metrics всех сервисов и хранилищ, добавляет метки сервиса и реплики")
+
+    Component(tsdb_comp, "Хранилище метрик", "Prometheus / TSDB", "Хранит временные ряды 15 дней, выполняет запросы PromQL")
+
+    Component(rules_comp, "Движок правил оповещений", "Prometheus / rule manager", "Раз в минуту вычисляет правила (ошибки 5xx, задержка p95, недоступность цели) и формирует оповещения")
+
+    Component(alert_comp, "Маршрутизатор оповещений", "Alertmanager", "Группирует и подавляет повторы, выбирает получателя по важности и рассылает письма")
+
+    Component(log_agent, "Агент сбора логов", "Grafana Alloy", "Читает журналы контейнеров, разбирает строки и добавляет метки сервиса")
+
+    Component(logs_comp, "Хранилище логов", "Grafana Loki", "Индексирует журналы по меткам, выполняет запросы LogQL")
+
+    Component(viz_comp, "Панели визуализации", "Grafana", "Строит панели состояния по метрикам и логам, даёт поиск по журналам")
+}
+
+' === ПОЛЬЗОВАТЕЛЬ ===
+Rel(devops, viz_comp, "Смотрит панели и ищет события в журналах", "HTTPS, TCP 3000")
+
+' === СБОР МЕТРИК ===
+Rel(scrape_comp, api_gateway, "Опрашивает метрики шлюза", "HTTP GET /metrics")
+Rel(scrape_comp, core_api, "Опрашивает метрики сервиса", "HTTP GET /metrics")
+Rel(scrape_comp, integration_service, "Опрашивает метрики сервиса", "HTTP GET /metrics")
+Rel(scrape_comp, database, "Опрашивает метрики СУБД", "HTTP GET /metrics, TCP 9187")
+Rel(scrape_comp, message_broker, "Опрашивает метрики очередей", "HTTP GET /metrics, TCP 15692")
+
+' === ВНУТРИ PROMETHEUS (один процесс) ===
+Rel(scrape_comp, tsdb_comp, "Записывает полученные отсчёты", "Go Call")
+Rel(rules_comp, tsdb_comp, "Читает ряды для вычисления правил", "Go Call")
+
+' === МЕЖДУ КОМПОНЕНТАМИ СТЕКА ===
+Rel(rules_comp, alert_comp, "Передаёт сработавшие оповещения", "HTTP/JSON, POST /api/v2/alerts, TCP 9093")
+Rel(log_agent, api_gateway, "Читает журналы доступа и ошибок", "Docker Engine API, stdout")
+Rel(log_agent, logs_comp, "Отправляет размеченные строки журналов", "HTTP, POST /loki/api/v1/push, TCP 3100")
+Rel(viz_comp, tsdb_comp, "Запрашивает метрики для панелей", "HTTP, PromQL, TCP 9090")
+Rel(viz_comp, logs_comp, "Запрашивает журналы для панелей", "HTTP, LogQL, TCP 3100")
+
+' === ИСХОДЯЩИЕ НАРУЖУ ===
+Rel(alert_comp, notification_gateway, "Отправляет письма об инцидентах", "SMTP/TLS, TCP 465")
+Rel(notification_gateway, devops, "Доставляет оповещения о сбоях", "E-mail")
+
+@enduml
