@@ -1,0 +1,57 @@
+@startuml "Fitness Aggregator - Reporting Service Components (Analyst)"
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Component.puml
+
+LAYOUT_WITH_LEGEND()
+
+title Диаграмма компонентов C4 (Level 3) — контейнер «Сервис отчётности»
+
+' ==== ВНЕШНИЕ ПО ОТНОШЕНИЮ К КОНТЕЙНЕРУ ЭЛЕМЕНТЫ (верхний ярус) ====
+Container(api_gateway, "API-шлюз", "Nginx", "Единая точка входа, проксирует запросы отчётности")
+
+Container_Boundary(analytics_service, "Сервис отчётности [Python 3.12 / FastAPI, pandas]") {
+
+  ' ---- Слой представления (API) ----
+  Component(report_controller, "Контроллер отчётности", "FastAPI Router", "Принимает запросы показателей, формирования отчётов и выгрузок, проверяет права роли и параметры периода.")
+
+  ' ---- Слой бизнес-логики ----
+  Component(metrics_engine, "Модуль расчёта показателей", "Python, pandas", "Считает загрузку залов, воронку покупок, выручку и комиссии по витринам за заданный период и разрез.")
+  Component(report_builder, "Сборщик отчётов", "Python, openpyxl, csv", "Собирает регламентные отчёты и выгрузки XLSX и CSV по шаблонам, формирует листы и итоговые строки.")
+  Component(settlement_exporter, "Модуль реестров начислений", "Python, lxml", "Формирует реестры начислений и акты по залам за период в формате обмена с бухгалтерией.")
+
+  ' ---- Слой доступа к данным и инфраструктуре ----
+  Component(mart_repository, "Репозиторий витрин", "Python, clickhouse-connect", "Абстрагирует аналитическое хранилище: строит и выполняет запросы к витринам, возвращает наборы данных.")
+  Component(storage_gateway, "Шлюз файлового хранилища", "Python, boto3 (S3 API)", "Сохраняет готовые файлы отчётов, ведёт версии и выдаёт ссылки на скачивание.")
+  Component(event_publisher, "Издатель событий", "Python, pika (AMQP)", "Публикует событие о готовности отчёта для последующей рассылки уведомлений.")
+}
+
+' ==== ВНЕШНИЕ ПО ОТНОШЕНИЮ К КОНТЕЙНЕРУ ХРАНИЛИЩА И СИСТЕМЫ (нижний ярус) ====
+ContainerDb(dwh, "Аналитическое хранилище и витрины", "ClickHouse", "Денормализованные витрины: загрузка залов, воронка покупок, выручка и комиссии")
+ContainerDb(object_storage, "Объектное хранилище", "MinIO (S3 API)", "Файлы готовых отчётов и их версии")
+ContainerQueue(message_broker, "Брокер сообщений", "RabbitMQ 3", "События системы, в том числе готовность отчёта")
+System_Ext(accounting_system, "Система бухгалтерского учёта", "1С:Бухгалтерия: акты и реестры начислений")
+
+' ==== ВХОД В КОНТЕЙНЕР ====
+Rel(api_gateway, report_controller, "Проксирует запросы отчётности", "HTTP/JSON, TCP 8003")
+
+' ==== ВНУТРИПРОЦЕССНЫЕ ВЫЗОВЫ (единое адресное пространство) ====
+Rel(report_controller, metrics_engine, "Запрашивает расчёт показателей за период", "Python Call")
+Rel(report_controller, report_builder, "Запрашивает сборку файла отчёта", "Python Call")
+Rel(report_controller, settlement_exporter, "Запрашивает реестр начислений по залам", "Python Call")
+Rel(metrics_engine, mart_repository, "Запрашивает наборы данных из витрин", "Python Call")
+Rel(report_builder, metrics_engine, "Получает рассчитанные показатели для листов отчёта", "Python Call")
+Rel(settlement_exporter, mart_repository, "Запрашивает данные о выручке и комиссиях", "Python Call")
+Rel(report_builder, storage_gateway, "Передаёт готовый файл на сохранение", "Python Call")
+Rel(report_builder, event_publisher, "Сообщает о готовности отчёта", "Python Call")
+Rel(report_controller, storage_gateway, "Запрашивает ссылку на скачивание файла", "Python Call")
+
+' ==== СЕТЕВЫЕ СВЯЗИ КОМПОНЕНТОВ С ХРАНИЛИЩАМИ И ВНЕШНИМИ СИСТЕМАМИ ====
+Rel(mart_repository, dwh, "Выполняет аналитические запросы к витринам", "HTTP, TCP 8123")
+Rel(storage_gateway, object_storage, "Сохраняет и отдаёт файлы отчётов", "HTTPS (S3 API), TCP 9000")
+Rel(event_publisher, message_broker, "Публикует событие о готовности отчёта", "AMQP, TCP 5672")
+Rel(settlement_exporter, accounting_system, "Передаёт реестры начислений и акты по залам", "HTTPS/REST, XML")
+
+' ==== ОПЦИОНАЛЬНО: фиксация раскладки (раскомментировать, если преподаватель разрешит Lay_*) ====
+' Lay_L(mart_repository, dwh)
+' Lay_R(storage_gateway, object_storage)
+
+@enduml
