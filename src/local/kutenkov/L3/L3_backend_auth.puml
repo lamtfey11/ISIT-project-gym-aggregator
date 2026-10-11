@@ -1,0 +1,67 @@
+@startuml L3_backend_auth
+' Подключаем стандартный макрос для диаграммы компонентов
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Component.puml
+
+LAYOUT_WITH_LEGEND()
+
+title Диаграмма компонентов C4 (Level 3) — Сервис авторизации (auth_service)
+
+' === ВНЕШНИЕ СИСТЕМЫ И КОНТЕЙНЕРЫ (Смежные узлы) ===
+System_Ext(idp, "Провайдер идентификации", "VK ID / Sber ID: внешняя аутентификация по OAuth 2.0 / OIDC")
+
+Container(api_gateway, "API-шлюз", "Nginx", "Терминация TLS, проксирование входящих запросов")
+ContainerDb(database, "Реляционная СУБД", "PostgreSQL 16", "Хранит профили пользователей и их роли")
+ContainerDb(cache, "Кэш и сессии", "Redis 7", "Хранит активные сессии и списки отозванных токенов")
+
+' === ГРАНИЦА НАШЕГО КОНТЕЙНЕРА ===
+Container_Boundary(auth_service, "Сервис авторизации (auth_service)") {
+    
+    ' --- СЛОЙ 1: Уровень API LAYER (Контроллеры) ---
+    Boundary(layer_api, "Слой 1: API (Delivery Layer)") {
+        Component(auth_api, "API Аутентификации", "Python 3.12 / FastAPI", "Вход, регистрация, обновление токенов (refresh)")
+        Component(oauth_api, "API внешнего входа (SSO)", "Python 3.12 / FastAPI", "Обработка callback-запросов от VK/Sber")
+        Component(user_api, "API Профилей", "Python 3.12 / FastAPI", "Управление профилями и ролями пользователей")
+    }
+
+    ' --- СЛОЙ 2: Уровень бизнес-логики (Сервисы) ---
+    Boundary(layer_service, "Слой 2: Бизнес-логика (Service Layer)") {
+        Component(auth_service_logic, "Сервис аутентификации", "Python 3.12", "Проверка паролей, генерация и валидация JWT")
+        Component(oauth_service, "Сервис OAuth 2.0", "Python 3.12", "Логика обмена кодов на токены и маппинг пользователей")
+        Component(user_service, "Сервис пользователей", "Python 3.12", "Проверка прав (RBAC), управление данными профиля")
+        Component(session_service, "Сервис сессий", "Python 3.12", "Контроль жизненного цикла сессий (создание, отзыв)")
+    }
+
+    ' --- СЛОЙ 3: Уровень доступа к БД (Адаптеры и репозитории) ---
+    Boundary(layer_infra, "Слой 3: Инфраструктура (Data Access / Adapters)") {
+        Component(db_repository, "Репозиторий пользователей", "Python 3.12 / SQLAlchemy 2.0", "Абстракция доступа к таблицам профилей в PostgreSQL")
+        Component(cache_repository, "Репозиторий сессий", "Python 3.12 / Redis-py", "Абстракция доступа к in-memory хранилищу сессий")
+        Component(idp_adapter, "Адаптер провайдера (IdP)", "Python 3.12", "Формирует HTTP-запросы к внешним серверам VK ID / Sber ID")
+    }
+}
+
+' === СВЯЗИ: Входящие запросы (API) ===
+Rel(api_gateway, auth_api, "Логин, регистрация, рефреш токенов", "HTTP/JSON 8001")
+Rel(api_gateway, oauth_api, "Перенаправление после входа в IdP", "HTTP/JSON 8001")
+Rel(api_gateway, user_api, "Управление профилем", "HTTP/JSON 8001")
+
+' === СВЯЗИ: API -> Бизнес-логика ===
+Rel(auth_api, auth_service_logic, "Инициирует авторизацию", "Python Call")
+Rel(oauth_api, oauth_service, "Передает Authorization Code", "Python Call")
+Rel(user_api, user_service, "Запрашивает данные профиля", "Python Call")
+
+' === СВЯЗИ: Внутри бизнес-логики  ===
+Rel(oauth_service, auth_service_logic, "Запрашивает выпуск локального JWT", "Python Call")
+Rel(auth_service_logic, user_service, "Проверяет существование профиля и роли", "Python Call")
+Rel(auth_service_logic, session_service, "Создает новую сессию", "Python Call")
+
+' === СВЯЗИ: Бизнес-логика -> доступ к БД ===
+Rel(user_service, db_repository, "Читает/пишет профили", "Python Call")
+Rel(session_service, cache_repository, "Пишет/читает токены", "Python Call")
+Rel(oauth_service, idp_adapter, "Инициирует запрос к провайдеру", "Python Call")
+
+' === СВЯЗИ: Выходящие вызовы ===
+Rel(db_repository, database, "Запросы к профилям и ролям", "SQL/TCP 5432")
+Rel(cache_repository, cache, "Запросы к активным сессиям", "RESP/TCP 6379")
+Rel(idp_adapter, idp, "Обмен кода на токен и профиль (OAuth 2.0)", "HTTPS")
+
+@enduml

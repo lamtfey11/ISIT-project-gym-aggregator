@@ -1,0 +1,76 @@
+@startuml L3_backend_core
+' Подключаем стандартный макрос для диаграммы компонентов
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Component.puml
+
+LAYOUT_WITH_LEGEND()
+
+title Диаграмма компонентов C4 (Level 3) — Сервис бизнес-логики (core_api)
+
+' ВНЕШНИЕ СИСТЕМЫ И КОНТЕЙНЕРЫ (Смежные узлы) 
+Container(api_gateway, "API-шлюз", "Nginx", "Единая точка входа, маршрутизация запросов к бэкенду")
+Container(integration_service, "Сервис интеграций", "Python 3.12 / FastAPI", "Единый шлюз для работы с внешними провайдерами")
+Container(iot_service, "Сервис допуска и загруженности", "Python 3.12 / FastAPI", "Управляет СКУД и расчетом загруженности")
+
+ContainerDb(database, "Реляционная СУБД", "PostgreSQL 16 + PostGIS 3", "Основное хранилище (схемы залов, абонементы, тарифы)")
+ContainerDb(cache, "Кэш и хранилище сессий", "Redis 7", "Кэш геопоиска и индекс загруженности")
+ContainerDb(object_storage, "Объектное хранилище", "MinIO (S3 API)", "Фотографии залов")
+ContainerQueue(message_broker, "Брокер сообщений", "RabbitMQ 3", "Асинхронная передача событий")
+
+' ГРАНИЦА НАШЕГО КОНТЕЙНЕРА
+Container_Boundary(core_api, "Сервис бизнес-логики (core_api)") {
+    
+    Boundary(api_layer, "Слой 1: API (Delivery Layer)") {
+        Component(catalog_api, "API Каталога и геопоиска", "Python 3.12 / FastAPI", "Принимает запросы на поиск залов и расписание")
+        Component(booking_api, "API Бронирования", "Python 3.12 / FastAPI", "Принимает запросы на покупку абонементов")
+        Component(payment_api, "API Оплат", "Python 3.12 / FastAPI", "Принимает webhook'и и запросы на расчет стоимости")
+        Component(admin_tariff_api, "API Управления тарифами", "Python 3.12 / FastAPI", "CRUD для тарифов (интерфейс администратора)")
+    }
+
+    Boundary(service_layer, "Слой 2: Бизнес-логика (Service Layer)") {
+        Component(booking_service, "Сервис бронирования", "Python 3.12", "Управляет жизненным циклом абонементов, проверяет лимиты")
+        Component(tariff_service, "Сервис тарификации", "Python 3.12", "Хранит правила ценообразования, применяет скидки")
+        Component(payment_service, "Сервис оплат", "Python 3.12", "Оркестрирует платежи, формирует корзину")
+    }
+
+    Boundary(infra_layer, "Слой 3: Инфраструктура (Data Access / Adapters)") {
+        Component(db_repository, "Репозиторий БД", "Python 3.12 / SQLAlchemy 2.0", "Абстракция поверх PostgreSQL (PostGIS) и Redis")
+        Component(iot_adapter, "Адаптер СКУД", "Python 3.12", "Отправляет команды и события в iot_service")
+        Component(integration_adapter, "Адаптер интеграций", "Python 3.12", "Взаимодействует с integration_service и RabbitMQ")
+    }
+}
+
+' СВЯЗИ (ВХОДЯЩИЕ ИЗ ШЛЮЗА) 
+Rel(api_gateway, catalog_api, "Запросы каталога и поиска", "HTTP/JSON")
+Rel(api_gateway, admin_tariff_api, "Управление тарифами (от админов)", "HTTP/JSON")
+Rel(api_gateway, booking_api, "Запросы на покупку абонементов", "HTTP/JSON")
+Rel(api_gateway, payment_api, "Запросы по оплате", "HTTP/JSON")
+
+' ВНУТРИПРОЦЕССНЫЕ СВЯЗИ (API -> Services)
+Rel(catalog_api, db_repository, "Чтение каталога", "Python Call")
+Rel(booking_api, booking_service, "Инициирует заказ", "Python Call")
+Rel(payment_api, payment_service, "Запрашивает статус платежа", "Python Call")
+Rel(admin_tariff_api, tariff_service, "Обновляет параметры тарифа", "Python Call")
+
+' ВНУТРИПРОЦЕССНЫЕ СВЯЗИ (Services -> Services)
+Rel(booking_service, tariff_service, "Запрашивает актуальную стоимость", "Python Call")
+Rel(booking_service, payment_service, "Передает корзину на оплату", "Python Call")
+
+' ВНУТРИПРОЦЕССНЫЕ СВЯЗИ (Services -> Infrastructure)
+Rel(booking_service, db_repository, "Сохраняет абонемент в БД", "Python Call")
+Rel(tariff_service, db_repository, "Пишет/читает тарифы", "Python Call")
+Rel(payment_service, db_repository, "Обновляет статус оплаты в БД", "Python Call")
+
+Rel(booking_service, iot_adapter, "Передает данные о проходах", "Python Call")
+Rel(payment_service, integration_adapter, "Инициирует транзакцию", "Python Call")
+Rel(booking_service, integration_adapter, "Отправляет уведомления", "Python Call")
+
+' СВЯЗИ (ИСХОДЯЩИЕ В ИНФРАСТРУКТУРУ И СМЕЖНЫЕ СЕРВИСЫ)
+Rel(db_repository, database, "Чтение/запись данных (SQL)", "SQL/TCP 5432")
+Rel(db_repository, cache, "Чтение кэша и индексов", "RESP/TCP 6379")
+Rel(db_repository, object_storage, "Чтение фото (S3)", "HTTPS 9000")
+
+Rel(iot_adapter, iot_service, "Уведомления о ручных отметках", "HTTP/JSON 8004")
+Rel(integration_adapter, integration_service, "Запросы в платежный шлюз", "HTTP/JSON 8002")
+Rel(integration_adapter, message_broker, "Публикация событий", "AMQP 5672")
+
+@enduml
