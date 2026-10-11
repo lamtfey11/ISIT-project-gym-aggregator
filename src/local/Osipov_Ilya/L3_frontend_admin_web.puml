@@ -1,0 +1,72 @@
+@startuml component_admin_web
+' ЛР. Диаграмма компонентов (C4, уровень 3)
+' Контейнер: admin_web - "Веб-панель администрирования"
+' Ответственный: Осипов Илья, ИДБ-23-14
+' Проект: ИС-агрегатор фитнес-клубов
+' Стили и skinparam в локальном файле не задаются - они определены в главном файле проекта.
+
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Component.puml
+
+title Диаграмма компонентов (C4, уровень 3). Контейнер "Веб-панель администрирования" ИС-агрегатора фитнес-клубов
+
+' ================= ВНЕШНЕЕ ОКРУЖЕНИЕ (чёрные ящики) =================
+Person(platform_operator, "Оператор платформы", "Сотрудник платформы: модерирует залы, настраивает тарифы и комиссии, обрабатывает обращения")
+Person(gym_admin, "Администратор зала", "Сотрудник партнёрского зала: ведёт карточку, тарифы и расписание, смотрит отчёты")
+Person(platform_analyst, "Аналитик платформы", "Проектирует показатели и витрины, готовит отчётность")
+
+Container(api_gateway, "API-шлюз", "Nginx", "Единая точка входа: терминация TLS, маршрутизация, проверка токена, ограничение частоты запросов")
+
+' ================= ГРАНИЦА КОНТЕЙНЕРА =================
+Container_Boundary(admin_web, "Веб-панель администрирования [React 18 / TypeScript, Vite, SPA]") {
+
+    Boundary(adm_layer_presentation, "Слой представления", "layer") {
+        Component(adm_ui_shell, "Каркас SPA и навигация", "React 18, React Router, Ant Design", "Макет рабочего места, маршрутизация между разделами, формы и таблицы. Состав меню формируется по роли текущего пользователя.")
+    }
+
+    Boundary(adm_layer_application, "Слой прикладной логики", "layer") {
+        Component(adm_auth_service, "Сервис сессии и разграничения прав", "TypeScript, OAuth 2.0 / OIDC, JWT", "Проводит вход через провайдера идентификации, разбирает роли из JWT-токена, разрешает или запрещает доступ к разделам и операциям, обновляет сессию.")
+        Component(adm_gym_profile_controller, "Контроллер карточки зала", "TypeScript, React Hook Form, Zod", "Ведение карточки зала, тарифов и расписания: валидация формы, работа с черновиком, отправка изменений на сохранение.")
+        Component(adm_moderation_controller, "Контроллер модерации и обращений", "TypeScript, Redux Toolkit", "Очередь непроверенных залов и отзывов, вердикты модерации, обработка обращений клиентов и инициация возвратов.")
+        Component(adm_report_controller, "Контроллер отчётности", "TypeScript, Redux Toolkit, Recharts", "Запрос показателей витрин, параметризация регламентных отчётов, отображение графиков, инициация выгрузок XLSX и CSV.")
+    }
+
+    Boundary(adm_layer_infrastructure, "Слой доступа к данным и интеграций", "layer") {
+        Component(adm_api_client, "Клиент API-шлюза", "TypeScript, Axios, interceptors", "Единственная точка сетевого обмена панели: сборка REST-запросов, подстановка заголовка Authorization, повторы, обработка кодов ответа и ошибок доступа.")
+        Component(adm_file_service, "Сервис файловых операций", "TypeScript, FileReader API, SheetJS", "Загрузка фотографий зала и документов партнёра, скачивание готовых отчётов, проверка формата и размера файла.")
+        Component(adm_state_store, "Клиентское состояние и кэш", "Redux Toolkit, TanStack Query, sessionStorage", "Репозиторий состояния рабочего места: профиль и роль пользователя, access-токен сессии, кэш справочников и ответов API, черновики форм.")
+    }
+}
+
+' ================= СВЯЗИ: ПОЛЬЗОВАТЕЛИ -> КОНТЕЙНЕР =================
+Rel(gym_admin, adm_ui_shell, "Ведёт карточку зала, тарифы и расписание, просматривает отчёты", "HTTPS, GUI")
+Rel(platform_operator, adm_ui_shell, "Модерирует залы и отзывы, настраивает комиссии, обрабатывает обращения", "HTTPS, GUI")
+Rel(platform_analyst, adm_ui_shell, "Проверяет витрины и задаёт параметры регламентных отчётов", "HTTPS, GUI")
+
+' ================= СВЯЗИ ВНУТРИ КОНТЕЙНЕРА (внутрипроцессные вызовы) =================
+Rel(adm_ui_shell, adm_auth_service, "Передаёт команду входа, запрашивает перечень доступных по роли разделов", "TypeScript Call")
+Rel(adm_ui_shell, adm_gym_profile_controller, "Передаёт изменения карточки зала, тарифов и расписания", "TypeScript Call")
+Rel(adm_ui_shell, adm_moderation_controller, "Передаёт вердикты модерации и решения по обращениям", "TypeScript Call")
+Rel(adm_ui_shell, adm_report_controller, "Передаёт параметры отчёта и команду выгрузки", "TypeScript Call")
+
+Rel(adm_auth_service, adm_api_client, "Передаёт код авторизации, запрашивает выпуск и обновление JWT-токенов", "TypeScript Call")
+Rel(adm_auth_service, adm_state_store, "Сохраняет профиль, роль и access-токен текущей сессии", "TypeScript Call")
+
+Rel(adm_gym_profile_controller, adm_api_client, "Отправляет изменения карточки зала, тарифов и расписания на сохранение", "TypeScript Call")
+Rel(adm_gym_profile_controller, adm_file_service, "Передаёт фотографии зала и документы партнёра для загрузки", "TypeScript Call")
+Rel(adm_gym_profile_controller, adm_state_store, "Сохраняет и читает черновик карточки зала и справочники", "TypeScript Call")
+
+Rel(adm_moderation_controller, adm_api_client, "Запрашивает очередь модерации и обращений, отправляет вердикты и заявки на возврат", "TypeScript Call")
+Rel(adm_moderation_controller, adm_state_store, "Сохраняет и читает фильтры и кэш очереди модерации", "TypeScript Call")
+
+Rel(adm_report_controller, adm_api_client, "Запрашивает показатели витрин и формирование реестров начислений", "TypeScript Call")
+Rel(adm_report_controller, adm_file_service, "Передаёт команду скачивания готового отчёта в формате XLSX или CSV", "TypeScript Call")
+
+Rel(adm_file_service, adm_api_client, "Передаёт файл на загрузку и запрашивает ссылку на выгрузку отчёта", "TypeScript Call")
+Rel(adm_api_client, adm_state_store, "Читает access-токен для заголовка Authorization и обновляет кэш ответов", "TypeScript Call")
+
+' ================= СВЯЗИ: КОНТЕЙНЕР -> ВНЕШНЕЕ ОКРУЖЕНИЕ =================
+Rel(adm_api_client, api_gateway, "Передаёт изменения карточки и решения модерации, запрашивает отчёты", "HTTPS/JSON (REST), TCP 443")
+
+SHOW_LEGEND()
+
+@enduml

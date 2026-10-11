@@ -1,0 +1,77 @@
+@startuml component_mobile_app
+' ЛР. Диаграмма компонентов (C4, уровень 3)
+' Контейнер: mobile_app - "Мобильное приложение клиента"
+' Ответственный: Осипов Илья, ИДБ-23-14
+' Проект: ИС-агрегатор фитнес-клубов
+' Стили и skinparam в локальном файле не задаются - они определены в главном файле проекта.
+
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Component.puml
+
+title Диаграмма компонентов (C4, уровень 3). Контейнер "Мобильное приложение клиента" ИС-агрегатора фитнес-клубов
+
+' ================= ВНЕШНЕЕ ОКРУЖЕНИЕ (чёрные ящики) =================
+Person(client, "Клиент", "Посетитель фитнес-зала: ищет зал рядом, покупает абонемент, проходит в зал по QR-пропуску")
+
+Container(api_gateway, "API-шлюз", "Nginx", "Единая точка входа: терминация TLS, маршрутизация, проверка токена, ограничение частоты запросов")
+
+System_Ext(payment_gateway, "Платёжный шлюз", "Эквайринг с поддержкой маркетплейс-схемы: платежи, возвраты, выплаты залам")
+System_Ext(maps_service, "Картографический сервис", "Яндекс Карты / 2ГИС: карта, геокодирование, маршруты")
+System_Ext(notification_delivery, "Сервисы доставки уведомлений", "FCM / APNs, SMS-шлюз, SMTP-сервер")
+
+' ================= ГРАНИЦА КОНТЕЙНЕРА =================
+Container_Boundary(mobile_app, "Мобильное приложение клиента [React Native / TypeScript]") {
+
+    Boundary(mob_layer_presentation, "Слой представления", "layer") {
+        Component(mob_ui_shell, "UI-слой и навигация", "React Native 0.74, React Navigation, react-native-maps", "Экраны карты, каталога, карточки зала, оплаты и пропуска. Получает геопозицию устройства, отображает залы на карте, маршрутизирует пользователя между экранами.")
+    }
+
+    Boundary(mob_layer_application, "Слой прикладной логики", "layer") {
+        Component(mob_catalog_controller, "Контроллер каталога и геопоиска", "TypeScript, Redux Toolkit", "Формирует запрос поиска залов по координатам и фильтрам, обрабатывает выдачу, расписание и отзывы, управляет состоянием списка и карточки зала.")
+        Component(mob_purchase_controller, "Контроллер покупки абонемента", "TypeScript, Redux Toolkit", "Оркестрирует сценарий покупки: выбор тарифа, создание заказа, вызов платёжной формы, опрос статуса оплаты, обработка ошибок и повторов.")
+        Component(mob_pass_service, "Сервис электронного пропуска", "TypeScript, react-native-qrcode-svg", "Запрашивает и обновляет токен пропуска, контролирует срок его жизни, формирует QR-код для предъявления на турникете.")
+        Component(mob_session_service, "Сервис сессии и авторизации", "TypeScript, OAuth 2.0 PKCE", "Проводит вход через внешнего провайдера, хранит состояние сессии, обновляет access-токен по refresh-токену, выполняет выход.")
+    }
+
+    Boundary(mob_layer_infrastructure, "Слой доступа к данным и интеграций", "layer") {
+        Component(mob_api_client, "Клиент API-шлюза", "TypeScript, Axios, interceptors", "Единственная точка сетевого обмена приложения: сборка REST-запросов, подстановка заголовка Authorization, ключи идемпотентности, повторы и обработка кодов ответа.")
+        Component(mob_secure_store, "Локальное защищённое хранилище", "MMKV, Keychain / Keystore", "Репозиторий локальных данных: токены сессии и пропуска, кэш выдачи каталога, последние координаты пользователя.")
+        Component(mob_payment_adapter, "Адаптер платёжного SDK", "SDK эквайера, TypeScript", "Инкапсулирует вызов платёжной формы и токенизацию карты на стороне эквайера; данные карты в приложении не сохраняются.")
+        Component(mob_push_handler, "Обработчик push-уведомлений", "Firebase Messaging SDK, TypeScript", "Регистрирует устройство, принимает push-сообщения и передаёт события в UI для открытия нужного экрана.")
+    }
+}
+
+' ================= СВЯЗИ: ПОЛЬЗОВАТЕЛЬ -> КОНТЕЙНЕР =================
+Rel(client, mob_ui_shell, "Выполняет поиск зала рядом, оформляет абонемент, предъявляет QR-пропуск", "Android / iOS, GUI")
+
+' ================= СВЯЗИ ВНУТРИ КОНТЕЙНЕРА (внутрипроцессные вызовы) =================
+Rel(mob_ui_shell, mob_catalog_controller, "Передаёт координаты и фильтры поиска, запрашивает карточку зала и расписание", "TypeScript Call")
+Rel(mob_ui_shell, mob_purchase_controller, "Передаёт выбранный тариф и команду оформления абонемента", "TypeScript Call")
+Rel(mob_ui_shell, mob_pass_service, "Запрашивает действующий QR-пропуск для показа на турникете", "TypeScript Call")
+Rel(mob_ui_shell, mob_session_service, "Передаёт команду входа и выхода из учётной записи", "TypeScript Call")
+
+Rel(mob_catalog_controller, mob_api_client, "Запрашивает список залов по координатам, карточку зала, расписание и отзывы", "TypeScript Call")
+Rel(mob_catalog_controller, mob_secure_store, "Сохраняет и читает кэш выдачи каталога и последние координаты", "TypeScript Call")
+
+Rel(mob_purchase_controller, mob_api_client, "Создаёт заказ абонемента и запрашивает его статус", "TypeScript Call")
+Rel(mob_purchase_controller, mob_payment_adapter, "Передаёт сумму, идентификатор заказа и параметры платёжной сессии", "TypeScript Call")
+Rel(mob_purchase_controller, mob_pass_service, "Передаёт признак оплаченного абонемента для выпуска пропуска", "TypeScript Call")
+
+Rel(mob_pass_service, mob_api_client, "Запрашивает выпуск и продление токена электронного пропуска", "TypeScript Call")
+Rel(mob_pass_service, mob_secure_store, "Сохраняет и читает токен пропуска с ограниченным сроком действия", "TypeScript Call")
+
+Rel(mob_session_service, mob_api_client, "Передаёт код авторизации, запрашивает выпуск и обновление JWT-токенов", "TypeScript Call")
+Rel(mob_session_service, mob_secure_store, "Сохраняет и читает access- и refresh-токены пользователя", "TypeScript Call")
+
+Rel(mob_api_client, mob_secure_store, "Читает access-токен для подстановки в заголовок Authorization", "TypeScript Call")
+
+Rel(mob_push_handler, mob_ui_shell, "Передаёт событие уведомления для открытия экрана и обновления данных", "TypeScript Call")
+
+' ================= СВЯЗИ: КОНТЕЙНЕР -> ВНЕШНЕЕ ОКРУЖЕНИЕ =================
+Rel(mob_ui_shell, maps_service, "Загружает картографические тайлы и строит маршрут до зала", "HTTPS/JSON")
+Rel(mob_api_client, api_gateway, "Запрашивает каталог, оформляет заказ, получает токен пропуска", "HTTPS/JSON (REST), TCP 443")
+Rel(mob_payment_adapter, payment_gateway, "Передаёт данные карты в токенизированном виде и получает результат платежа", "HTTPS/JSON, SDK эквайера")
+Rel(notification_delivery, mob_push_handler, "Доставляет push-уведомление о покупке, визите и окончании абонемента", "FCM / APNs")
+
+SHOW_LEGEND()
+
+@enduml
