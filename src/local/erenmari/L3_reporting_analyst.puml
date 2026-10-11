@@ -50,8 +50,4 @@ Rel(storage_gateway, object_storage, "Сохраняет и отдаёт фай�
 Rel(event_publisher, message_broker, "Публикует событие о готовности отчёта", "AMQP, TCP 5672")
 Rel(settlement_exporter, accounting_system, "Передаёт реестры начислений и акты по залам", "HTTPS/REST, XML")
 
-' ==== ОПЦИОНАЛЬНО: фиксация раскладки (раскомментировать, если преподаватель разрешит Lay_*) ====
-' Lay_L(mart_repository, dwh)
-' Lay_R(storage_gateway, object_storage)
-
 @enduml
