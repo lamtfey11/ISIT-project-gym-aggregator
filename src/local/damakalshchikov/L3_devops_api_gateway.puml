@@ -1,0 +1,64 @@
+@startuml L3_devops_api_gateway
+' Зона ответственности: DevOps-инженер
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Component.puml
+
+LAYOUT_WITH_LEGEND()
+
+title Диаграмма компонентов (Level 3) — API-шлюз (api_gateway)
+
+' === ВНЕШНИЕ СИСТЕМЫ ===
+System_Ext(payment_gateway, "Платёжный шлюз", "Эквайринг: присылает уведомления о статусе платежа (webhook)")
+System_Ext(bi_platform, "BI-платформа", "Yandex DataLens: строит дашборды поверх витрин")
+
+' === СМЕЖНЫЕ КОНТЕЙНЕРЫ ===
+Container(mobile_app, "Мобильное приложение клиента", "React Native / TypeScript", "Геопоиск залов, покупка абонемента, QR-пропуск")
+Container(admin_web, "Веб-панель администрирования", "React 18 / TypeScript, Vite (SPA)", "Рабочее место администратора зала, оператора и аналитика")
+Container(monitoring, "Система наблюдаемости", "Prometheus, Alertmanager, Grafana, Loki", "Собирает метрики и логи, рассылает оповещения")
+
+Container(auth_service, "Сервис авторизации", "Python 3.12 / FastAPI", "Аутентификация, выпуск и проверка JWT")
+Container(core_api, "Сервис бизнес-логики", "Python 3.12 / FastAPI", "Каталог, тарифы, абонементы, заказы, отзывы")
+Container(analytics_service, "Сервис отчётности", "Python 3.12 / FastAPI", "Регламентные отчёты и выгрузки")
+Container(iot_service, "Сервис допуска и загруженности", "Python 3.12 / FastAPI", "Выдача и проверка QR-пропусков")
+Container(integration_service, "Сервис интеграций и уведомлений", "Python 3.12 / FastAPI, Celery", "Обработка webhook платёжного шлюза")
+ContainerDb(dwh, "Аналитическое хранилище и витрины", "ClickHouse", "Денормализованные витрины для BI")
+
+' === ГРАНИЦА КОНТЕЙНЕРА ===
+Container_Boundary(api_gateway, "API-шлюз (api_gateway, Nginx)") {
+
+    Component(tls_comp, "Модуль проверки TLS-сертификата", "Nginx / ngx_http_ssl_module, HTTP/2", "Принимает входящие соединения на порту 443, расшифровывает TLS 1.3, проверяет SNI и сертификат")
+
+    Component(ratelimit_comp, "Модуль ограничения нагрузки", "Nginx / limit_req, limit_conn", "Ограничивает частоту запросов и число соединений с одного клиента, отвечает 429 при превышении")
+
+    Component(authcheck_comp, "Модуль проверки доступа", "Nginx / auth_request", "Подзапросом проверяет JWT пользователя, пропускает без проверки только публичные маршруты (вход, каталог)")
+
+    Component(partner_comp, "Модуль доступа внешних систем", "Nginx / allow-deny, geo, map", "Пропускает webhook платёжного шлюза и запросы BI только с доверенных адресов, без пользовательского JWT")
+
+    Component(router_comp, "Модуль маршрутизации", "Nginx / location, upstream, proxy_pass", "Направляет запрос в нужный сервис по префиксу пути, балансирует нагрузку между репликами")
+
+    Component(metrics_comp, "Модуль метрик", "Nginx / nginx-module-vts", "Считает запросы, коды ответов и задержки по каждому upstream, отдаёт их в формате Prometheus")
+}
+
+' === ВХОДЯЩИЕ СВЯЗИ ===
+Rel(mobile_app, tls_comp, "Отправляет запросы к API", "HTTPS/JSON, TCP 443")
+Rel(admin_web, tls_comp, "Отправляет запросы к API", "HTTPS/JSON, TCP 443")
+Rel(payment_gateway, tls_comp, "Присылает статус платежа (webhook)", "HTTPS/JSON, TCP 443")
+Rel(bi_platform, tls_comp, "Запрашивает данные витрин", "SQL over HTTPS, TCP 443")
+Rel(monitoring, metrics_comp, "Опрашивает метрики шлюза", "HTTP GET /metrics")
+
+' === ВНУТРИПРОЦЕССНЫЕ СВЯЗИ (фазы обработки запроса в рабочем процессе Nginx) ===
+Rel(tls_comp, ratelimit_comp, "Передаёт расшифрованный запрос", "Фаза обработки Nginx")
+Rel(ratelimit_comp, authcheck_comp, "Передаёт пользовательский запрос в пределах лимита", "Фаза обработки Nginx")
+Rel(ratelimit_comp, partner_comp, "Передаёт запросы /webhooks и /bi", "Фаза обработки Nginx")
+Rel(authcheck_comp, router_comp, "Передаёт запрос с подтверждённым JWT", "Фаза обработки Nginx")
+Rel(router_comp, metrics_comp, "Передаёт код ответа и время upstream", "Фаза журналирования Nginx")
+
+' === ИСХОДЯЩИЕ СВЯЗИ ===
+Rel(authcheck_comp, auth_service, "Проверяет JWT и права роли", "HTTP/JSON, TCP 8001")
+Rel(router_comp, auth_service, "Проксирует вход, регистрацию и обновление токенов", "HTTP/JSON, TCP 8001")
+Rel(router_comp, core_api, "Проксирует запросы каталога, заказов, подписок и модерации", "HTTP/JSON, TCP 8000")
+Rel(router_comp, analytics_service, "Проксирует запросы отчётов", "HTTP/JSON, TCP 8003")
+Rel(router_comp, iot_service, "Проксирует выдачу и проверку QR-пропусков", "HTTP/JSON, TCP 8004")
+Rel(partner_comp, integration_service, "Проксирует webhook платёжного шлюза", "HTTP/JSON, TCP 8002")
+Rel(partner_comp, dwh, "Проксирует запросы BI к витринам (только чтение)", "HTTP, TCP 8123")
+
+@enduml
