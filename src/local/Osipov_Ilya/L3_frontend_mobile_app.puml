@@ -16,7 +16,7 @@ Container(api_gateway, "API-шлюз", "Nginx", "Единая точка вхо�
 
 System_Ext(payment_gateway, "Платёжный шлюз", "Эквайринг с поддержкой маркетплейс-схемы: платежи, возвраты, выплаты залам")
 System_Ext(maps_service, "Картографический сервис", "Яндекс Карты / 2ГИС: карта, геокодирование, маршруты")
-System_Ext(notification_delivery, "Сервисы доставки уведомлений", "FCM / APNs, SMS-шлюз, SMTP-сервер")
+System_Ext(notification_gateway, "Сервисы доставки уведомлений", "FCM / APNs, SMS-шлюз, SMTP-сервер")
 
 ' ================= ГРАНИЦА КОНТЕЙНЕРА =================
 Container_Boundary(mobile_app, "Мобильное приложение клиента [React Native / TypeScript]") {
@@ -70,7 +70,7 @@ Rel(mob_push_handler, mob_ui_shell, "Передаёт событие уведо�
 Rel(mob_ui_shell, maps_service, "Загружает картографические тайлы и строит маршрут до зала", "HTTPS/JSON")
 Rel(mob_api_client, api_gateway, "Запрашивает каталог, оформляет заказ, получает токен пропуска", "HTTPS/JSON (REST), TCP 443")
 Rel(mob_payment_adapter, payment_gateway, "Передаёт данные карты в токенизированном виде и получает результат платежа", "HTTPS/JSON, SDK эквайера")
-Rel(notification_delivery, mob_push_handler, "Доставляет push-уведомление о покупке, визите и окончании абонемента", "FCM / APNs")
+Rel(notification_gateway, mob_push_handler, "Доставляет push-уведомление о покупке, визите и окончании абонемента", "FCM / APNs")
 
 SHOW_LEGEND()
 
