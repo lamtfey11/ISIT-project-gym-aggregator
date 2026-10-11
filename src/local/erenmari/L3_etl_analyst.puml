@@ -43,8 +43,4 @@ Rel(event_consumer, message_broker, "Читает поток событий дл
 Rel(mart_loader, dwh, "Загружает очищенные партии и пересчитывает витрины", "HTTP, TCP 8123")
 Rel(dag_scheduler, dwh, "Читает метки инкремента, пишет статус запуска в журнал загрузок", "HTTP, TCP 8123")
 
-' ==== ОПЦИОНАЛЬНО: фиксация раскладки (раскомментировать, если преподаватель разрешит Lay_*) ====
-' Lay_L(mart_loader, database)
-' Lay_R(mart_loader, dwh)
-
 @enduml
