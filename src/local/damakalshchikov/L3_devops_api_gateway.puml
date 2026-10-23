@@ -7,21 +7,18 @@ LAYOUT_WITH_LEGEND()
 title Диаграмма компонентов (Level 3) — API-шлюз (api_gateway)
 
 ' === ВНЕШНИЕ СИСТЕМЫ ===
-System_Ext(payment_gateway, "Платёжный шлюз", "Эквайринг: присылает уведомления о статусе платежа (webhook)")
-System_Ext(bi_platform, "BI-платформа", "Yandex DataLens: строит дашборды поверх витрин")
-
+System_Ext(payment_gateway, "Платёжный шлюз", "Эквайринг с поддержкой маркетплейс-схемы: платежи, возвраты, выплаты залам")
+System_Ext(bi_platform, "BI-платформа", "Yandex DataLens: дашборды поверх витрин")
 ' === СМЕЖНЫЕ КОНТЕЙНЕРЫ ===
-Container(mobile_app, "Мобильное приложение клиента", "React Native / TypeScript", "Геопоиск залов, покупка абонемента, QR-пропуск")
-Container(admin_web, "Веб-панель администрирования", "React 18 / TypeScript, Vite (SPA)", "Рабочее место администратора зала, оператора и аналитика")
-Container(monitoring, "Система наблюдаемости", "Prometheus, Alertmanager, Grafana, Loki", "Собирает метрики и логи, рассылает оповещения")
-
-Container(auth_service, "Сервис авторизации", "Python 3.12 / FastAPI", "Аутентификация, выпуск и проверка JWT")
-Container(core_api, "Сервис бизнес-логики", "Python 3.12 / FastAPI", "Каталог, тарифы, абонементы, заказы, отзывы")
-Container(analytics_service, "Сервис отчётности", "Python 3.12 / FastAPI", "Регламентные отчёты и выгрузки")
-Container(iot_service, "Сервис допуска и загруженности", "Python 3.12 / FastAPI", "Выдача и проверка QR-пропусков")
-Container(integration_service, "Сервис интеграций и уведомлений", "Python 3.12 / FastAPI, Celery", "Обработка webhook платёжного шлюза")
-ContainerDb(dwh, "Аналитическое хранилище и витрины", "ClickHouse", "Денормализованные витрины для BI")
-
+Container_Ext(mobile_app, "Мобильное приложение клиента", "React Native / TypeScript", "Геопоиск залов на карте, каталог и расписание, покупка абонемента, отзывы, QR-пропуск для прохода в зал, push-уведомления.")
+Container_Ext(admin_web, "Веб-панель администрирования", "React 18 / TypeScript, Vite (SPA)", "Рабочее место администратора зала, оператора платформы и аналитика (доступ по ролям): карточка, тарифы абонементов и расписание зала, режим сканирования QR-пропусков на входе и выходе ручным сканером и ручная отметка посещений, модерация, условия размещения и комиссия, обращения и возвраты, отчёты.")
+Container_Ext(monitoring, "Система наблюдаемости", "Prometheus, Alertmanager, Grafana, Loki", "Собирает метрики и логи контейнеров, строит панели, рассылает оповещения об инцидентах напрямую по SMTP, чтобы оповещение о сбое не зависело от наблюдаемых сервисов.")
+Container_Ext(auth_service, "Сервис авторизации", "Python 3.12 / FastAPI", "Регистрация и аутентификация, выпуск JWT-токенов и их проверка по подзапросу шлюза, разграничение прав по ролям, вход через внешнего провайдера идентификации.")
+Container_Ext(core_api, "Сервис бизнес-логики", "Python 3.12 / FastAPI, SQLAlchemy", "Ядро предметной области: каталог и геопоиск, карточки и расписание залов, тарифы абонементов, условия размещения и комиссия платформы (расчёт цены и доли комиссии), абонементы и заказы, инициирование возвратов, отзывы, модерация. Списывает занятия абонемента по событиям прохода, сами посещения не хранит.")
+Container_Ext(analytics_service, "Сервис отчётности", "Python 3.12 / FastAPI, pandas", "Считает показатели по витринам, собирает регламентные отчёты и выгрузки XLSX и CSV, формирует для бухгалтерии реестры начислений из реестра выплат без пересчёта сумм.")
+Container_Ext(iot_service, "Сервис допуска и загруженности", "Python 3.12 / FastAPI, asyncio, aiomqtt", "Приём событий СКУД по MQTT и сканов администратора по HTTP, выдача и проверка QR-пропусков, единый учёт посещений (вход и выход: турникет, сканер администратора, ручная отметка), расчёт индекса загруженности зала по 10-балльной шкале по балансу входов и выходов.")
+Container_Ext(integration_service, "Сервис интеграций и уведомлений", "Python 3.12 / FastAPI, Celery", "Обмен с внешними системами: платежи по суммам от сервиса бизнес-логики, приём webhook, возвраты, расчёт и проведение выплат залам (ведёт реестр выплат), геокодирование адресов, регистрация устройств и рассылка push, SMS и e-mail. Celery только для фоновых задач.")
+ContainerDb_Ext(dwh, "Аналитическое хранилище и витрины", "ClickHouse", "Денормализованные витрины: загрузка залов, воронка покупок, выручка и комиссии, выплаты залам.")
 ' === ГРАНИЦА КОНТЕЙНЕРА ===
 Container_Boundary(api_gateway, "API-шлюз (api_gateway, Nginx)") {
 
@@ -29,7 +26,7 @@ Container_Boundary(api_gateway, "API-шлюз (api_gateway, Nginx)") {
 
     Component(ratelimit_comp, "Модуль ограничения нагрузки", "Nginx / limit_req, limit_conn", "Ограничивает частоту запросов и число соединений с одного клиента, отвечает 429 при превышении")
 
-    Component(authcheck_comp, "Модуль проверки доступа", "Nginx / auth_request", "Подзапросом проверяет JWT пользователя, пропускает без проверки только публичные маршруты (вход, каталог)")
+    Component(authcheck_comp, "Модуль проверки доступа", "Nginx / auth_request", "Подзапросом к /auth/verify проверяет JWT пользователя, получает X-User-Id и X-User-Role; без проверки пропускает только публичные маршруты (вход, каталог)")
 
     Component(partner_comp, "Модуль доступа внешних систем", "Nginx / allow-deny, geo, map", "Пропускает webhook платёжного шлюза и запросы BI только с доверенных адресов, без пользовательского JWT")
 
@@ -39,25 +36,26 @@ Container_Boundary(api_gateway, "API-шлюз (api_gateway, Nginx)") {
 }
 
 ' === ВХОДЯЩИЕ СВЯЗИ ===
-Rel(mobile_app, tls_comp, "Отправляет запросы к API", "HTTPS/JSON, TCP 443")
-Rel(admin_web, tls_comp, "Отправляет запросы к API", "HTTPS/JSON, TCP 443")
-Rel(payment_gateway, tls_comp, "Присылает статус платежа (webhook)", "HTTPS/JSON, TCP 443")
-Rel(bi_platform, tls_comp, "Запрашивает данные витрин", "SQL over HTTPS, TCP 443")
+Rel(mobile_app, tls_comp, "Запрашивает каталог, оформляет заказ, оставляет отзыв, получает токен пропуска, регистрирует устройство для push", "HTTPS/JSON (REST), TCP 443")
+Rel(admin_web, tls_comp, "Передаёт изменения карточки, тарифов и условий, сканы и ручные отметки, решения модерации и заявки на возврат, запрашивает отчёты", "HTTPS/JSON (REST), TCP 443")
+Rel(payment_gateway, tls_comp, "Сообщает статус платежа (webhook)", "HTTPS/JSON, TCP 443")
+Rel(bi_platform, tls_comp, "Читает витрины данных для дашбордов (только чтение)", "SQL over HTTPS, TCP 443")
 Rel(monitoring, metrics_comp, "Опрашивает метрики шлюза", "HTTP GET /metrics")
 
-' === ВНУТРИПРОЦЕССНЫЕ СВЯЗИ (фазы обработки запроса в рабочем процессе Nginx) ===
+' === ВНУТРИПРОЦЕССНЫЕ СВЯЗИ ===
 Rel(tls_comp, ratelimit_comp, "Передаёт расшифрованный запрос", "Фаза обработки Nginx")
 Rel(ratelimit_comp, authcheck_comp, "Передаёт пользовательский запрос в пределах лимита", "Фаза обработки Nginx")
 Rel(ratelimit_comp, partner_comp, "Передаёт запросы /webhooks и /bi", "Фаза обработки Nginx")
-Rel(authcheck_comp, router_comp, "Передаёт запрос с подтверждённым JWT", "Фаза обработки Nginx")
+Rel(authcheck_comp, router_comp, "Передаёт запрос с подтверждённым JWT и заголовками X-User-Id, X-User-Role", "Фаза обработки Nginx")
 Rel(router_comp, metrics_comp, "Передаёт код ответа и время upstream", "Фаза журналирования Nginx")
 
 ' === ИСХОДЯЩИЕ СВЯЗИ ===
-Rel(authcheck_comp, auth_service, "Проверяет JWT и права роли", "HTTP/JSON, TCP 8001")
+Rel(authcheck_comp, auth_service, "Проверяет JWT и права роли (подзапрос /auth/verify)", "HTTP/JSON, TCP 8001")
 Rel(router_comp, auth_service, "Проксирует вход, регистрацию и обновление токенов", "HTTP/JSON, TCP 8001")
-Rel(router_comp, core_api, "Проксирует запросы каталога, заказов, подписок и модерации", "HTTP/JSON, TCP 8000")
-Rel(router_comp, analytics_service, "Проксирует запросы отчётов", "HTTP/JSON, TCP 8003")
-Rel(router_comp, iot_service, "Проксирует выдачу и проверку QR-пропусков", "HTTP/JSON, TCP 8004")
+Rel(router_comp, core_api, "Проксирует запросы каталога, заказов, отзывов, модерации и тарифов", "HTTP/JSON, TCP 8000")
+Rel(router_comp, analytics_service, "Проксирует запросы отчётности", "HTTP/JSON, TCP 8003")
+Rel(router_comp, iot_service, "Проксирует выдачу и проверку QR-пропуска, сканы администратора и ручные отметки входа и выхода", "HTTP/JSON, TCP 8004")
+Rel(router_comp, integration_service, "Проксирует регистрацию устройств для push", "HTTP/JSON, TCP 8002")
 Rel(partner_comp, integration_service, "Проксирует webhook платёжного шлюза", "HTTP/JSON, TCP 8002")
 Rel(partner_comp, dwh, "Проксирует запросы BI к витринам (только чтение)", "HTTP, TCP 8123")
 
