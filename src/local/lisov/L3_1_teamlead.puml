@@ -4,68 +4,70 @@
 LAYOUT_WITH_LEGEND()
 title Диаграмма компонентов контейнера "Сервис интеграций и уведомлений" (integration_service) ИС "Агрегатор фитнес-клубов"
 
-' === СОСЕДНИЕ КОНТЕЙНЕРЫ И ВНЕШНИЕ СИСТЕМЫ (чёрные ящики, внутрь не заглядываем) ===
+' === СОСЕДНИЕ КОНТЕЙНЕРЫ И ВНЕШНИЕ СИСТЕМЫ (чёрные ящики, описания совпадают со сводной диаграммой контейнеров) ===
 Container_Ext(api_gateway, "API-шлюз", "Nginx", "Единая точка входа: терминация TLS 1.3, маршрутизация, проверка токена через сервис авторизации, ограничение частоты запросов, приём webhook и запросов BI.")
-Container_Ext(core_api, "Сервис бизнес-логики", "Python 3.12 / FastAPI, SQLAlchemy", "Ядро предметной области: каталог и геопоиск залов, тарифы, абонементы и заказы, отзывы, модерация, учёт посещений.")
-Container_Ext(monitoring, "Система наблюдаемости", "Prometheus, Alertmanager, Grafana, Loki", "Собирает метрики и логи контейнеров, строит панели, рассылает оповещения об инцидентах.")
-ContainerDb_Ext(database, "Реляционная СУБД", "PostgreSQL 16 + PostGIS 3", "Основное хранилище: пользователи и роли, залы и геоиндексы, тарифы, абонементы, заказы, платежи, посещения, журнал операций.")
-ContainerQueue_Ext(message_broker, "Брокер сообщений", "RabbitMQ 3", "Асинхронный обмен событиями между сервисами: оплата, подписки, проходы, готовность отчётов.")
+Container_Ext(core_api, "Сервис бизнес-логики", "Python 3.12 / FastAPI, SQLAlchemy", "Ядро предметной области: каталог и геопоиск, карточки и расписание залов, тарифы абонементов, условия размещения и комиссия платформы (расчёт цены и доли комиссии), абонементы и заказы, инициирование возвратов, отзывы, модерация. Списывает занятия абонемента по событиям прохода, сами посещения не хранит.")
+Container_Ext(monitoring, "Система наблюдаемости", "Prometheus, Alertmanager, Grafana, Loki", "Собирает метрики и логи контейнеров, строит панели, рассылает оповещения об инцидентах напрямую по SMTP, чтобы оповещение о сбое не зависело от наблюдаемых сервисов.")
+ContainerDb_Ext(database, "Реляционная СУБД", "PostgreSQL 16 + PostGIS 3", "Основное хранилище: пользователи и роли, залы и геоиндексы, тарифы абонементов, условия размещения и комиссии, абонементы, заказы, платежи, реестр выплат, посещения, журнал операций. У каждой таблицы один сервис-владелец, который в неё пишет.")
+ContainerQueue_Ext(message_broker, "Брокер сообщений", "RabbitMQ 3", "Доменные события между сервисами (заказы, абонементы, платежи, проходы, готовность отчётов): topic-обменник, у каждого подписчика своя очередь, единый JSON-конверт с идентификатором события.")
 System_Ext(payment_gateway, "Платёжный шлюз", "Эквайринг с поддержкой маркетплейс-схемы: платежи, возвраты, выплаты залам")
 System_Ext(maps_service, "Картографический сервис", "Яндекс Карты / 2ГИС: карта, геокодирование, маршруты")
 System_Ext(notification_gateway, "Сервисы доставки уведомлений", "FCM / APNs, SMS-шлюз, SMTP-сервер")
-
 ' === ПРОЕКТИРУЕМЫЙ КОНТЕЙНЕР: слои сверху вниз (API -> бизнес-логика -> инфраструктура) ===
 Container_Boundary(integration_service, "Сервис интеграций и уведомлений") {
 
   Boundary(api_layer, "Слой API (входные интерфейсы)") {
     Component(webhook_api_comp, "Контроллер webhook платёжной системы", "FastAPI APIRouter, Pydantic v2", "Принимает webhook платёжной системы, проверяет подпись и ключ идемпотентности, передаёт статус платежа платёжному сервису.")
-    Component(integration_api_comp, "Контроллер внутренних запросов", "FastAPI APIRouter, Pydantic v2", "Принимает от сервиса бизнес-логики запросы на платёж, возврат и геокодирование адреса; отдаёт метрики сервиса (/metrics).")
+    Component(integration_api_comp, "Контроллер внутренних запросов", "FastAPI APIRouter, Pydantic v2", "Принимает от сервиса бизнес-логики запросы на платёж с готовой разбивкой суммы, возврат и геокодирование адреса; отдаёт метрики сервиса (/metrics).")
+    Component(device_api_comp, "Контроллер регистрации устройств", "FastAPI APIRouter, Pydantic v2", "Принимает от мобильного приложения через шлюз токен устройства для push-уведомлений и его отзыв при выходе.")
   }
 
   Boundary(service_layer, "Слой бизнес-логики") {
-    Component(payment_comp, "Платёжный сервис", "Python (сервисный слой)", "Ведёт жизненный цикл платежа: создание, подтверждение, возврат, защита от двойного списания при повторном webhook, сплит доли зала и комиссии платформы.")
-    Component(payout_comp, "Сервис выплат залам", "Python (сервисный слой), Celery beat", "Раз в месяц по расписанию рассчитывает выплаты залам по оплаченным заказам и передаёт их эквайрингу.")
+    Component(payment_comp, "Платёжный сервис", "Python (сервисный слой)", "Ведёт жизненный цикл платежа: создание, подтверждение, возврат, защита от двойного списания при повторном webhook; оформляет сплит у эквайера по суммам из запроса, сам долю комиссии не рассчитывает.")
+    Component(payout_comp, "Сервис выплат залам", "Python (сервисный слой), Celery beat", "Раз в месяц по расписанию рассчитывает выплаты залам по оплаченным заказам, ведёт реестр выплат (источник сумм для бухгалтерии) и передаёт выплаты эквайрингу.")
     Component(geocoding_comp, "Сервис геокодирования", "Python (сервисный слой)", "Преобразует адрес зала в координаты и приводит ответ картографического сервиса к внутреннему формату.")
-    Component(notification_comp, "Сервис уведомлений", "Python (сервисный слой), Celery", "Выбирает канал доставки (push, SMS, e-mail), формирует текст по шаблону, повторяет отправку при сбое.")
+    Component(notification_comp, "Сервис уведомлений", "Python (сервисный слой), Celery", "Хранит токены устройств, выбирает канал доставки (push, SMS, e-mail), формирует текст по шаблону, повторяет отправку при сбое (повторы через Celery).")
   }
 
   Boundary(infrastructure_layer, "Слой инфраструктуры (адаптеры к внешним системам)") {
     Component(acquiring_client_comp, "Клиент платёжного шлюза", "Python (HTTP-клиент)", "Адаптер к API эквайринга: платежи, возвраты, выплаты. Единственное место, знающее формат платёжного шлюза.")
     Component(maps_client_comp, "Клиент картографического сервиса", "Python (HTTP-клиент)", "Адаптер к API геокодирования картографического сервиса.")
     Component(delivery_client_comp, "Клиент провайдеров доставки", "Python (HTTP-клиент, SMTP)", "Адаптер к провайдерам push, SMS и e-mail.")
-    Component(integration_repo_comp, "Репозиторий платежей и журнала обмена", "SQLAlchemy 2.0", "Слой доступа к данным: статусы платежей, ключи идемпотентности, реестр выплат, журнал обмена с внешними системами.")
-    Component(integration_events_comp, "Шина событий", "Python, Celery (AMQP)", "Публикует события платежей и получает события, требующие уведомления.")
+    Component(integration_repo_comp, "Репозиторий платежей и журнала обмена", "SQLAlchemy 2.0", "Слой доступа к данным: статусы платежей, ключи идемпотентности, реестр выплат, токены устройств, журнал обмена с внешними системами.")
+    Component(integration_events_comp, "Шина событий", "Python, aio-pika (AMQP)", "Публикует payment.succeeded, payment.failed, payment.refunded; получает subscription.activated, subscription.expiring, access.passed и report.ready из собственной очереди.")
   }
 }
 
 ' === ВХОДЯЩИЕ СЕТЕВЫЕ ВЫЗОВЫ (стыковочные шлюзы контейнера) ===
 Rel(api_gateway, webhook_api_comp, "Передаёт входящие webhook платёжной системы", "HTTP/JSON, TCP 8002")
-Rel(core_api, integration_api_comp, "Запрашивает создание платежа, возврат и геокодирование адреса", "HTTP/JSON, TCP 8002")
+Rel(api_gateway, device_api_comp, "Передаёт регистрацию устройств для push", "HTTP/JSON, TCP 8002")
+Rel(core_api, integration_api_comp, "Запрашивает платёж с разбивкой суммы (доля зала и комиссия), возврат и геокодирование адреса", "HTTP/JSON, TCP 8002")
 Rel(monitoring, integration_api_comp, "Опрашивает метрики сервиса", "HTTP GET /metrics")
 
 ' === ВНУТРИПРОЦЕССНЫЕ ВЫЗОВЫ: API -> бизнес-логика ===
 Rel(webhook_api_comp, payment_comp, "Передаёт подтверждённый статус платежа", "Python Call")
-Rel(integration_api_comp, payment_comp, "Создаёт платёж и оформляет возврат", "Python Call")
+Rel(integration_api_comp, payment_comp, "Создаёт платёж по готовой разбивке суммы и оформляет возврат", "Python Call")
 Rel(integration_api_comp, geocoding_comp, "Геокодирует адрес зала", "Python Call")
+Rel(device_api_comp, notification_comp, "Регистрирует и отзывает токен устройства", "Python Call")
 
 ' === ВНУТРИПРОЦЕССНЫЕ ВЫЗОВЫ: бизнес-логика -> инфраструктура ===
 Rel(payment_comp, acquiring_client_comp, "Создаёт платёж и оформляет возврат", "Python Call")
 Rel(payment_comp, integration_repo_comp, "Сохраняет статус платежа и ключ идемпотентности", "Python Call")
-Rel(payment_comp, integration_events_comp, "Публикует событие платежа", "Python Call")
+Rel(payment_comp, integration_events_comp, "Публикует payment.*", "Python Call")
 Rel(payout_comp, integration_repo_comp, "Читает оплаченные заказы, сохраняет реестр выплат", "Python Call")
 Rel(payout_comp, acquiring_client_comp, "Передаёт выплату залу", "Python Call")
 Rel(geocoding_comp, maps_client_comp, "Запрашивает координаты по адресу", "Python Call")
 Rel(notification_comp, delivery_client_comp, "Передаёт уведомление на отправку", "Python Call")
-Rel(notification_comp, integration_repo_comp, "Пишет журнал отправки уведомлений", "Python Call")
+Rel(notification_comp, integration_repo_comp, "Читает токены устройств, пишет журнал отправки", "Python Call")
 
 ' === ВНУТРИПРОЦЕССНЫЕ ВЫЗОВЫ: события из брокера -> бизнес-логика ===
-Rel(integration_events_comp, notification_comp, "Передаёт событие, требующее уведомления", "Python Call")
+Rel(integration_events_comp, notification_comp, "Передаёт событие, требующее уведомления (покупка, окончание абонемента, визит, готовность отчёта)", "Python Call")
 
 ' === ИСХОДЯЩИЕ СЕТЕВЫЕ ВЫЗОВЫ ===
 Rel(acquiring_client_comp, payment_gateway, "Создаёт платежи, оформляет возвраты и выплаты залам", "HTTPS/REST")
 Rel(maps_client_comp, maps_service, "Геокодирует адреса залов", "HTTPS/REST")
 Rel(delivery_client_comp, notification_gateway, "Отправляет push, SMS и e-mail на доставку", "HTTPS/REST, SMTP/TLS 465")
-Rel(integration_repo_comp, database, "Пишет статусы платежей и журнал обмена", "SQL/TCP, TCP 5432")
-Rel(integration_events_comp, message_broker, "Публикует события платежей, получает события для уведомлений", "AMQP, TCP 5672")
+Rel(integration_repo_comp, database, "Пишет статусы платежей, реестр выплат залам, токены устройств и журнал обмена", "SQL/TCP, TCP 5432")
+Rel(integration_events_comp, message_broker, "Публикует payment.*; получает subscription.*, access.passed, report.ready для уведомлений", "AMQP, TCP 5672")
 
 @enduml
