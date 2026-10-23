@@ -1,0 +1,96 @@
+@startuml L3_backend_core
+' Подключаем стандартный макрос для диаграммы компонентов
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Component.puml
+
+LAYOUT_WITH_LEGEND()
+
+title Диаграмма компонентов C4 (Level 3) — Сервис бизнес-логики (core_api)
+
+' === ВНЕШНИЕ КОНТЕЙНЕРЫ ===
+Container_Ext(api_gateway, "API-шлюз", "Nginx", "Единая точка входа: терминация TLS 1.3, маршрутизация, проверка токена через сервис авторизации, ограничение частоты запросов, приём webhook и запросов BI.")
+Container_Ext(integration_service, "Сервис интеграций и уведомлений", "Python 3.12 / FastAPI, Celery", "Обмен с внешними системами: платежи по суммам от сервиса бизнес-логики, приём webhook, возвраты, расчёт и проведение выплат залам (ведёт реестр выплат), геокодирование адресов, регистрация устройств и рассылка push, SMS и e-mail. Celery только для фоновых задач.")
+Container_Ext(monitoring, "Система наблюдаемости", "Prometheus, Alertmanager, Grafana, Loki", "Собирает метрики и логи контейнеров, строит панели, рассылает оповещения об инцидентах напрямую по SMTP, чтобы оповещение о сбое не зависело от наблюдаемых сервисов.")
+ContainerDb_Ext(database, "Реляционная СУБД", "PostgreSQL 16 + PostGIS 3", "Основное хранилище: пользователи и роли, залы и геоиндексы, тарифы абонементов, условия размещения и комиссии, абонементы, заказы, платежи, реестр выплат, посещения, журнал операций. У каждой таблицы один сервис-владелец, который в неё пишет.")
+ContainerDb_Ext(cache, "Кэш и хранилище сессий", "Redis 7", "Кэш геопоиска, актуальный индекс загруженности, сессии и токены, короткоживущие токены пропусков.")
+ContainerDb_Ext(object_storage, "Объектное хранилище", "MinIO (S3 API)", "Фотографии залов, аватары, документы партнёров, файлы готовых отчётов.")
+ContainerQueue_Ext(message_broker, "Брокер сообщений", "RabbitMQ 3", "Доменные события между сервисами (заказы, абонементы, платежи, проходы, готовность отчётов): topic-обменник, у каждого подписчика своя очередь, единый JSON-конверт с идентификатором события.")
+' === ГРАНИЦА НАШЕГО КОНТЕЙНЕРА ===
+Container_Boundary(core_api, "Сервис бизнес-логики (core_api)") {
+
+    ' --- СЛОЙ 1: Уровень API  ---
+    Boundary(api_layer, "Слой 1: API (Delivery Layer)") {
+        Component(catalog_api, "API каталога и отзывов", "Python 3.12 / FastAPI", "Принимает запросы геопоиска, карточки и расписания зала, чтения и публикации отзывов; отдаёт метрики сервиса (/metrics)")
+        Component(gym_profile_api, "API кабинета зала", "Python 3.12 / FastAPI", "Принимает от администратора зала изменения карточки, расписания и фотографий зала")
+        Component(admin_tariff_api, "API тарифов и условий размещения", "Python 3.12 / FastAPI", "Тарифы абонементов (администратор зала), условия размещения и комиссия платформы (оператор платформы)")
+        Component(booking_api, "API заказов и абонементов", "Python 3.12 / FastAPI", "Принимает запросы на покупку абонемента и статус заказа (ключ идемпотентности)")
+        Component(payment_api, "API оплаты заказа", "Python 3.12 / FastAPI", "Создаёт платёж по заказу и отдаёт клиенту данные для платёжного SDK и статус оплаты; webhook эквайера не принимает")
+        Component(moderation_api, "API модерации и обращений", "Python 3.12 / FastAPI", "Вердикты модерации залов и отзывов, обращения клиентов, заявки на возврат (оператор платформы)")
+    }
+
+    ' --- СЛОЙ 2: Уровень бизнес-логики  ---
+    Boundary(service_layer, "Слой 2: Бизнес-логика (Service Layer)") {
+        Component(catalog_service, "Сервис каталога", "Python 3.12", "Геопоиск залов, карточки, расписание, фотографии и отзывы; публикует изменения карточки зала (вместимость, тип оборудования)")
+        Component(tariff_service, "Сервис тарификации", "Python 3.12", "Хранит тарифы абонементов и условия размещения, рассчитывает цену абонемента и долю комиссии платформы")
+        Component(booking_service, "Сервис абонементов", "Python 3.12", "Жизненный цикл заказа и абонемента: создание, активация после оплаты, списание занятий по событию входа, напоминание об окончании")
+        Component(payment_service, "Сервис оплат", "Python 3.12", "Оркестрирует платёж и возврат через сервис интеграций, обрабатывает результат оплаты, сообщает сервису абонементов об успешной оплате")
+        Component(moderation_service, "Сервис модерации", "Python 3.12", "Очередь проверки залов и отзывов, обращения клиентов, решение о возврате")
+    }
+
+    ' --- СЛОЙ 3: Уровень доступа к хранилищам  ---
+    Boundary(infra_layer, "Слой 3: Инфраструктура (Data Access / Adapters)") {
+        Component(db_repository, "Репозиторий БД", "Python 3.12 / SQLAlchemy 2.0", "Доступ к таблицам сервиса в PostgreSQL, геозапросы PostGIS")
+        Component(cache_adapter, "Адаптер кэша", "Python 3.12 / redis-py", "Кэш выдачи геопоиска, чтение актуального индекса загруженности")
+        Component(photo_storage_adapter, "Адаптер хранилища фотографий", "Python 3.12 / boto3 (S3 API)", "Сохраняет фотографии залов и выдаёт ссылки на них")
+        Component(integration_adapter, "Адаптер сервиса интеграций", "Python 3.12 / httpx", "HTTP-клиент к сервису интеграций: платёж с разбивкой суммы, возврат, геокодирование адреса")
+        Component(event_bus, "Шина событий", "Python 3.12 / aio-pika (AMQP)", "Публикует order.created, subscription.activated, subscription.expiring, gym.updated; получает payment.* и access.passed из собственной очереди")
+    }
+}
+
+' === СВЯЗИ: Входные ===
+Rel(api_gateway, catalog_api, "Запросы каталога, геопоиска и отзывов", "HTTP/JSON, TCP 8000")
+Rel(api_gateway, gym_profile_api, "Изменения карточки, расписания и фото зала", "HTTP/JSON, TCP 8000")
+Rel(api_gateway, admin_tariff_api, "Изменения тарифов абонементов и условий размещения", "HTTP/JSON, TCP 8000")
+Rel(api_gateway, booking_api, "Покупка абонемента и статус заказа", "HTTP/JSON, TCP 8000")
+Rel(api_gateway, payment_api, "Создание платежа по заказу и статус оплаты", "HTTP/JSON, TCP 8000")
+Rel(api_gateway, moderation_api, "Вердикты модерации, обращения и заявки на возврат", "HTTP/JSON, TCP 8000")
+Rel(monitoring, catalog_api, "Опрашивает метрики сервиса", "HTTP GET /metrics")
+
+' === СВЯЗИ: API - Бизнес-логика ===
+Rel(catalog_api, catalog_service, "Запрашивает выдачу геопоиска, карточку, расписание; передаёт отзыв", "Python Call")
+Rel(gym_profile_api, catalog_service, "Передаёт изменения карточки, расписания и фотографии", "Python Call")
+Rel(admin_tariff_api, tariff_service, "Передаёт тарифы абонементов и условия размещения", "Python Call")
+Rel(booking_api, booking_service, "Создаёт заказ абонемента, запрашивает статус", "Python Call")
+Rel(payment_api, payment_service, "Создаёт платёж по заказу, запрашивает статус оплаты", "Python Call")
+Rel(moderation_api, moderation_service, "Передаёт вердикты, обращения и заявки на возврат", "Python Call")
+
+' === СВЯЗИ: Внутри бизнес-логики  ==
+Rel(booking_service, tariff_service, "Запрашивает цену абонемента и долю комиссии", "Python Call")
+Rel(payment_service, booking_service, "Сообщает об успешной оплате заказа для активации абонемента", "Python Call")
+Rel(moderation_service, catalog_service, "Публикует или скрывает зал и отзыв по вердикту", "Python Call")
+Rel(moderation_service, payment_service, "Передаёт одобренную заявку на возврат", "Python Call")
+
+' === СВЯЗИ: события из брокера - бизнес-логика ===
+Rel(event_bus, payment_service, "Передаёт payment.succeeded, payment.failed, payment.refunded", "Python Call")
+Rel(event_bus, booking_service, "Передаёт access.passed для списания занятия", "Python Call")
+
+' === СВЯЗИ: Бизнес-логика - доступ к БД ===
+Rel(catalog_service, db_repository, "Читает и пишет карточки, расписание, отзывы, выполняет геозапросы", "Python Call")
+Rel(catalog_service, cache_adapter, "Кэширует выдачу геопоиска, читает индекс загруженности", "Python Call")
+Rel(catalog_service, photo_storage_adapter, "Сохраняет фотографии зала", "Python Call")
+Rel(catalog_service, integration_adapter, "Запрашивает геокодирование адреса зала", "Python Call")
+Rel(catalog_service, event_bus, "Публикует gym.updated", "Python Call")
+Rel(tariff_service, db_repository, "Читает и пишет тарифы и условия размещения", "Python Call")
+Rel(booking_service, db_repository, "Сохраняет заказы и абонементы, списания занятий", "Python Call")
+Rel(booking_service, event_bus, "Публикует order.created, subscription.activated, subscription.expiring", "Python Call")
+Rel(payment_service, db_repository, "Обновляет статус оплаты заказа", "Python Call")
+Rel(payment_service, integration_adapter, "Запрашивает платёж с разбивкой суммы и возврат", "Python Call")
+Rel(moderation_service, db_repository, "Читает и пишет очередь модерации и обращения", "Python Call")
+
+' === СВЯЗИ: Выходные ===
+Rel(db_repository, database, "Читает и записывает каталог, тарифы, условия и комиссии, абонементы, заказы, отзывы, выполняет геозапросы", "SQL/TCP, TCP 5432")
+Rel(cache_adapter, cache, "Кэширует геопоиск, читает индекс загруженности", "RESP/TCP, TCP 6379")
+Rel(photo_storage_adapter, object_storage, "Сохраняет и отдаёт фотографии залов", "HTTPS (S3 API), TCP 9000")
+Rel(integration_adapter, integration_service, "Запрашивает платёж с разбивкой суммы (доля зала и комиссия), возврат и геокодирование адреса", "HTTP/JSON, TCP 8002")
+Rel(event_bus, message_broker, "Публикует order.created, subscription.activated, subscription.expiring, gym.updated; получает payment.*, access.passed", "AMQP, TCP 5672")
+
+@enduml

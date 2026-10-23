@@ -47,9 +47,9 @@ Rel(api_gateway, message_broker, "Публикует событие (оплат�
 Rel(message_broker, notification_service, "Доставляет событие подписчику", "AMQP")
 Rel(message_broker, analytics_service, "Передаёт событие для агрегации", "AMQP")
 
-Rel(api_gateway, monitoring, "Отправляет метрики и логи", "HTTP / Prometheus exporter")
-Rel(database, monitoring, "Отправляет метрики состояния БД", "HTTP / Prometheus exporter")
-Rel(message_broker, monitoring, "Отправляет метрики очереди", "HTTP / Prometheus exporter")
+Rel(monitoring, api_gateway, "Опрашивает метрики сервиса", "HTTP / Prometheus scrape")
+Rel(monitoring, database, "Опрашивает метрики состояния БД", "HTTP / Prometheus scrape")
+Rel(monitoring, message_broker, "Опрашивает метрики очереди", "HTTP / Prometheus scrape")
 
 Rel(notification_service, sms_provider, "Отправляет уведомление", "HTTPS/REST")
 Rel(sms_provider, client, "Доставляет SMS/push-уведомление", "SMS / Push")
