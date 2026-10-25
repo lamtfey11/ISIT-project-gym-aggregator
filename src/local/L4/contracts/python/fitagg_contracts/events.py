@@ -1,3 +1,10 @@
+"""Доменные события, которыми сервисы обмениваются через RabbitMQ.
+
+Каталог событий зафиксирован в отчёте ЛР1 (таблица «Каталог доменных событий»):
+у каждого события один издатель, каждый подписчик читает его из собственной очереди.
+Все события упакованы в единый JSON-конверт EventEnvelope.
+"""
+
 from __future__ import annotations
 
 from datetime import date, datetime, time
@@ -11,11 +18,15 @@ from .money import Money
 
 
 class Direction(StrEnum):
+    """Направление прохода. Посещение всегда учитывается парой IN и OUT."""
+
     IN = "IN"
     OUT = "OUT"
 
 
 class AccessSource(StrEnum):
+    """Источник события прохода (решение команды: турникет, сканер администратора, ручная отметка)."""
+
     TURNSTILE = "TURNSTILE"
     ADMIN_SCANNER = "ADMIN_SCANNER"
     MANUAL = "MANUAL"
@@ -41,6 +52,8 @@ class _Frozen(BaseModel):
 
 
 class EventEnvelope(_Frozen):
+    """Единый конверт: по event_id подписчик распознаёт повтор события."""
+
     event_id: UUID
     event_type: EventType
     producer: Producer
@@ -50,6 +63,8 @@ class EventEnvelope(_Frozen):
 
 
 class OrderCreated(_Frozen):
+    """order.created, издатель core_api."""
+
     order_id: UUID
     user_id: UUID
     gym_id: UUID
@@ -58,6 +73,8 @@ class OrderCreated(_Frozen):
 
 
 class PaymentSucceeded(_Frozen):
+    """payment.succeeded, издатель integration_service."""
+
     payment_id: UUID
     order_id: UUID
     total: Money
@@ -66,18 +83,24 @@ class PaymentSucceeded(_Frozen):
 
 
 class PaymentFailed(_Frozen):
+    """payment.failed, издатель integration_service."""
+
     payment_id: UUID
     order_id: UUID
     reason: str
 
 
 class PaymentRefunded(_Frozen):
+    """payment.refunded, издатель integration_service."""
+
     payment_id: UUID
     order_id: UUID
     refunded: Money
 
 
 class SubscriptionActivated(_Frozen):
+    """subscription.activated, издатель core_api: оплаченный абонемент, можно выдавать пропуск."""
+
     subscription_id: UUID
     order_id: UUID
     user_id: UUID
@@ -88,6 +111,8 @@ class SubscriptionActivated(_Frozen):
 
 
 class SubscriptionExpiring(_Frozen):
+    """subscription.expiring, издатель core_api."""
+
     subscription_id: UUID
     user_id: UUID
     gym_id: UUID
@@ -95,12 +120,16 @@ class SubscriptionExpiring(_Frozen):
 
 
 class GymUpdated(_Frozen):
+    """gym.updated, издатель core_api. Вместимость нужна сервису загруженности."""
+
     gym_id: UUID
     capacity: int = Field(ge=1)
     closing_time: time | None = None
 
 
 class AccessPassed(_Frozen):
+    """access.passed, издатель iot_service: вход или выход из одного из трёх источников."""
+
     visit_event_id: UUID
     gym_id: UUID
     user_id: UUID
@@ -111,6 +140,8 @@ class AccessPassed(_Frozen):
 
 
 class ReportReady(_Frozen):
+    """report.ready, издатель analytics_service."""
+
     report_id: UUID
     recipient_user_id: UUID
     file_format: Literal["XLSX", "CSV"]

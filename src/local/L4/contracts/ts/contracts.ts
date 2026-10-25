@@ -1,3 +1,9 @@
+/**
+ * Общие контракты на стыках для TypeScript-компонентов (admin_web, api_gateway).
+ * Зеркало Python-пакета fitagg_contracts: имена полей совпадают (snake_case в JSON),
+ * совпадение проверяет integration/check_contracts.py.
+ */
+
 export type Direction = "IN" | "OUT";
 export type MarkMethod = "SCAN" | "MANUAL";
 
