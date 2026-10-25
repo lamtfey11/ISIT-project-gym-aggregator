@@ -1,0 +1,225 @@
+@startuml L4_etl_dq_validator
+' C4 Level 4 (Code). Нотация: UML Class Diagram.
+' Компонент etl_dq_validator контейнера etl_service; Python-пакет src/etl_dq_validator. Автор: Эрендженова М.
+' Имена классов и методов совпадают с кодом src/etl_dq_validator.
+
+title Диаграмма кода (C4, уровень 4): компонент «Модуль контроля качества данных» (etl_dq_validator; на L3 — dq_validator) контейнера «Сервис загрузки данных (ETL)» (etl_service)
+
+hide empty members
+left to right direction
+
+package "Контракты на стыках (fitagg_contracts)" <<Frame>> {
+  enum Direction {
+    IN
+    OUT
+  }
+  enum AccessSource {
+    TURNSTILE
+    ADMIN_SCANNER
+    MANUAL
+  }
+}
+
+package "Предметная модель" {
+  class Batch <<dataclass>> {
+    +batch_id: UUID
+    +dataset: str
+    +frame: pd.DataFrame
+  }
+  class ValidationContext <<dataclass>> {
+    +now: datetime
+    +reference_keys: Mapping[str, frozenset[str]]
+  }
+  enum Severity {
+    CRITICAL
+    WARNING
+  }
+  class RuleResult <<dataclass>> {
+    +rule_name: str
+    +severity: Severity
+    +failed_rows: frozenset[int]
+    +batch_level: bool
+    +message: str
+    +passed: bool
+  }
+  enum BatchStatus {
+    ACCEPTED
+    ACCEPTED_WITH_QUARANTINE
+    REJECTED
+  }
+  class PolicyDecision <<dataclass>> {
+    +status: BatchStatus
+    +accepted_rows: frozenset[int]
+    +quarantined_rows: frozenset[int]
+    +reason: str
+  }
+  class ValidationReport <<dataclass>> {
+    +batch_id: UUID
+    +dataset: str
+    +status: BatchStatus
+    +policy_name: str
+    +checked_at: datetime
+    +total_rows: int
+    +accepted: pd.DataFrame
+    +quarantined: pd.DataFrame
+    +results: tuple[RuleResult, ...]
+    +reason: str
+    +failed_rules: list[str]
+  }
+}
+
+package "Правила качества (Strategy № 1)" {
+  abstract class QualityRule {
+    -_severity: Severity
+    +severity: Severity
+    +{abstract} name: str
+    +{abstract} evaluate(frame: pd.DataFrame, context: ValidationContext): RuleResult
+  }
+  class SchemaRule {
+    -{static} _KINDS: Mapping[str, str]
+    -_columns: dict[str, str]
+  }
+  class NotNullRule {
+    -_columns: list[str]
+  }
+  class UniqueRule {
+    -_columns: list[str]
+  }
+  class RangeRule {
+    -_column: str
+    -_minimum: float | None
+    -_maximum: float | None
+  }
+  class AllowedValuesRule {
+    -_column: str
+    -_allowed: frozenset[str]
+  }
+  class ReferenceRule {
+    -_column: str
+    -_reference: str
+  }
+  class SumEqualsRule {
+    -_parts: list[str]
+    -_total: str
+  }
+  class NotInFutureRule {
+    -_column: str
+    -_tolerance: timedelta
+  }
+}
+
+package "Политики отбраковки (Strategy № 2)" {
+  interface RejectionPolicy {
+    +name: str
+    +decide(rows: frozenset[int], results: Sequence[RuleResult]): PolicyDecision
+  }
+  class StrictBatchPolicy {
+    +name: str = "strict_batch"
+  }
+  class QuarantineRowsPolicy {
+    -_max_share: float
+    +name: str = "quarantine_rows"
+  }
+  class AuditOnlyPolicy {
+    +name: str = "audit_only"
+  }
+}
+
+package "Профили витрин" {
+  class DatasetProfile <<dataclass>> {
+    +dataset: str
+    +rules: list[QualityRule]
+    +policy: RejectionPolicy
+  }
+  class ProfileRegistry {
+    -_profiles: dict[str, DatasetProfile]
+    +register(profile: DatasetProfile): None
+    +get(dataset: str): DatasetProfile
+    +datasets(): list[str]
+  }
+}
+
+package "Контекст" {
+  class DataQualityValidator {
+    -_profiles: ProfileRegistry
+    -_clock: Clock
+    +validate(batch: Batch, reference_keys: Mapping[str, frozenset[str]] | None): ValidationReport
+    +use_policy(dataset: str, policy: RejectionPolicy): None
+    +add_rule(dataset: str, rule: QualityRule): None
+  }
+}
+
+package "Порты" {
+  interface Clock {
+    +now(): datetime
+  }
+}
+
+' --- Strategy № 1 ---
+SchemaRule --|> QualityRule
+NotNullRule --|> QualityRule
+UniqueRule --|> QualityRule
+RangeRule --|> QualityRule
+AllowedValuesRule --|> QualityRule
+ReferenceRule --|> QualityRule
+SumEqualsRule --|> QualityRule
+NotInFutureRule --|> QualityRule
+QualityRule ..> RuleResult : создаёт
+QualityRule ..> ValidationContext : читает
+QualityRule --> Severity
+
+' --- Strategy № 2 ---
+StrictBatchPolicy ..|> RejectionPolicy
+QuarantineRowsPolicy ..|> RejectionPolicy
+AuditOnlyPolicy ..|> RejectionPolicy
+RejectionPolicy ..> PolicyDecision : создаёт
+RejectionPolicy ..> RuleResult : читает
+
+' --- Профили и контекст ---
+ProfileRegistry o-- "*" DatasetProfile
+DatasetProfile o-- "1..*" QualityRule
+DatasetProfile o-- "1" RejectionPolicy
+DataQualityValidator --> "1" ProfileRegistry
+DataQualityValidator --> "1" Clock
+DataQualityValidator ..> Batch : получает от etl_transform_engine
+DataQualityValidator ..> ValidationReport : передаёт etl_mart_loader
+PolicyDecision --> BatchStatus
+ValidationReport --> BatchStatus
+AllowedValuesRule ..> Direction : допустимые значения
+AllowedValuesRule ..> AccessSource : допустимые значения
+
+note bottom of DataQualityValidator
+  Сначала проверяется схема: без нужных колонок
+  остальные правила не запускаются.
+  Правило определяет «что нарушено», политика —
+  «что делать с партией»: fact_payments — strict_batch
+  (нарушение контрольного правила отбраковывает
+  партию целиком), fact_visits — quarantine_rows.
+  Политика подменяется во время работы: use_policy().
+end note
+
+package "Ошибки и реализации часов (domain, ports)" {
+  class UnknownDatasetError
+  class SystemClock
+  class FixedClock <<tests>>
+}
+ProfileRegistry ..> UnknownDatasetError : бросает
+SystemClock ..|> Clock
+FixedClock ..|> Clock
+
+legend right
+  <b>Условные обозначения</b>
+  ..|>  реализация интерфейса (у портов — структурная, typing.Protocol)
+  --|>  наследование
+  o--   агрегация: объект передаётся извне и живёт отдельно
+  *--   композиция: часть создаётся и живёт только внутри целого
+  -->   ассоциация: поле класса
+  ..>   зависимость: создаёт, читает, вызывает или бросает
+  interface — в Python: ABC с абстрактными методами или typing.Protocol
+  abstract class — ABC с общим кодом для наследников
+  «dataclass» — класс данных (@dataclass); «contract …» — общий тип на стыке контейнеров
+  «module» — функции модуля вне классов; «tests» — реализация только для тестов и демо
+  + публичный, - приватный член; {static} — член класса
+endlegend
+
+@enduml
