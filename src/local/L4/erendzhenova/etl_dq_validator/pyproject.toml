@@ -1,0 +1,20 @@
+[project]
+name = "etl-dq-validator"
+version = "0.1.0"
+description = "Компонент etl_dq_validator контейнера etl_service (C4 L4, ЛР3)"
+requires-python = ">=3.12"
+dependencies = ["pydantic>=2.6", "pandas>=2.2"]
+
+[project.optional-dependencies]
+dev = ["mypy>=1.10", "pytest>=8", "pandas-stubs>=2.2"]
+
+[tool.mypy]
+strict = true
+python_version = "3.12"
+mypy_path = ["src", "../../contracts/python"]
+packages = ["etl_dq_validator"]
+plugins = ["pydantic.mypy"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src", "../../contracts/python"]
+testpaths = ["tests"]
