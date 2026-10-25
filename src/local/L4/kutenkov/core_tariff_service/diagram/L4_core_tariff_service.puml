@@ -1,0 +1,234 @@
+@startuml L4_core_tariff_service
+' C4 Level 4 (Code). Нотация: UML Class Diagram.
+' Компонент core_tariff_service «Сервис тарификации» контейнера core_api; Python-пакет src/core_tariff_service. Автор: Кутенков С.
+' Имена классов и методов совпадают с кодом src/core_tariff_service.
+
+title Диаграмма кода (C4, уровень 4): компонент «Сервис тарификации» (core_tariff_service; на L3 — tariff_service) контейнера «Сервис бизнес-логики» (core_api)
+
+hide empty members
+left to right direction
+
+package "Контракты на стыках (fitagg_contracts)" <<Frame>> {
+  class Money <<contract>> {
+    +amount_minor: int
+    +currency: Literal["RUB"]
+    +{static} rub(rubles: int, kopecks: int): Money
+  }
+  class PaymentSplit <<contract core_api → integration_service>> {
+    +order_id: UUID
+    +total: Money
+    +gym_share: Money
+    +platform_commission: Money
+  }
+}
+
+package "Предметная модель" {
+  class SubscriptionTariff <<dataclass>> {
+    +tariff_id: UUID
+    +gym_id: UUID
+    +title: str
+    +list_price: Money
+    +duration_days: int
+    +visits_total: int | None
+  }
+  enum PlacementModel {
+    COMMISSION
+    COMMISSION_WITH_MINIMUM
+    SUBSCRIPTION
+  }
+  class PlacementTerms <<dataclass>> {
+    +gym_id: UUID
+    +model: PlacementModel
+    +commission_rate: Decimal
+    +minimum_fee: Money
+    +monthly_fee: Money
+  }
+  class PromoCode <<dataclass>> {
+    +code: str
+    +percent_off: int
+    +valid_until: date
+    +max_discount: Money | None
+    +is_valid_on(day: date): bool
+  }
+  class PriceRequest <<dataclass>> {
+    +order_id: UUID
+    +tariff_id: UUID
+    +user_id: UUID
+    +promo_code: str | None
+    +is_first_purchase: bool
+  }
+  class PricingInput <<dataclass>> {
+    +tariff: SubscriptionTariff
+    +promo: PromoCode | None
+    +is_first_purchase: bool
+    +today: date
+  }
+  class PriceBreakdown <<dataclass>> {
+    +list_price: Money
+    +discount: Money
+    +total: Money
+  }
+  class RevenueSplit <<dataclass>> {
+    +gym_share: Money
+    +platform_commission: Money
+  }
+  class PriceQuote <<dataclass>> {
+    +order_id: UUID
+    +tariff_id: UUID
+    +list_price: Money
+    +total: Money
+    +discount: Money
+    +gym_share: Money
+    +platform_commission: Money
+    +pricing_strategy: str
+    +commission_strategy: str
+    +to_payment_split(): PaymentSplit
+  }
+}
+
+package "Стратегии цены (Strategy № 1)" {
+  interface PricingStrategy {
+    +name: str
+    +is_applicable(pricing_input: PricingInput): bool
+    +price(pricing_input: PricingInput): PriceBreakdown
+  }
+  class StandardPricing {
+    +name: str = "standard"
+  }
+  class PromoCodePricing {
+    +name: str = "promo_code"
+  }
+  class FirstPurchasePricing {
+    -_percent_off: int
+    +name: str = "first_purchase"
+  }
+  class PricingStrategySelector {
+    -_strategies: list[PricingStrategy]
+    +add(strategy: PricingStrategy): None
+    +select(pricing_input: PricingInput): PricingStrategy
+  }
+}
+
+package "Стратегии комиссии (Strategy № 2)" {
+  interface CommissionStrategy {
+    +name: str
+    +split(total: Money, terms: PlacementTerms): RevenueSplit
+  }
+  class PercentageCommission {
+    +name: str = "percentage"
+  }
+  class MinimumFeeCommission {
+    +name: str = "percentage_with_minimum"
+  }
+  class SubscriptionPlanCommission {
+    +name: str = "subscription_plan"
+  }
+  class CommissionStrategyRegistry {
+    -_by_model: dict[PlacementModel, CommissionStrategy]
+    +register(model: PlacementModel, strategy: CommissionStrategy): None
+    +for_model(model: PlacementModel): CommissionStrategy
+  }
+}
+
+package "Контекст" {
+  class TariffService {
+    -_pricing: PricingStrategySelector
+    -_commissions: CommissionStrategyRegistry
+    +quote(request: PriceRequest): PriceQuote
+    +save_tariff(tariff: SubscriptionTariff): None
+    +set_placement_terms(terms: PlacementTerms): None
+    +use_commission_strategy(model: PlacementModel, strategy: CommissionStrategy): None
+  }
+}
+
+package "Порты" {
+  interface TariffRepository <<core_db_repository>> {
+    +get_tariff(tariff_id: UUID): SubscriptionTariff | None
+    +save_tariff(tariff: SubscriptionTariff): None
+    +get_placement_terms(gym_id: UUID): PlacementTerms | None
+    +save_placement_terms(terms: PlacementTerms): None
+    +find_promo(code: str): PromoCode | None
+  }
+  interface Calendar {
+    +today(): date
+  }
+}
+
+' --- Strategy № 1 ---
+StandardPricing ..|> PricingStrategy
+PromoCodePricing ..|> PricingStrategy
+FirstPurchasePricing ..|> PricingStrategy
+PricingStrategySelector o-- "1..*" PricingStrategy
+PricingStrategy ..> PricingInput : читает
+PricingStrategy ..> PriceBreakdown : создаёт
+
+' --- Strategy № 2 ---
+PercentageCommission ..|> CommissionStrategy
+MinimumFeeCommission ..|> CommissionStrategy
+SubscriptionPlanCommission ..|> CommissionStrategy
+CommissionStrategyRegistry o-- "1..*" CommissionStrategy
+CommissionStrategy ..> PlacementTerms : читает
+CommissionStrategy ..> RevenueSplit : создаёт
+
+' --- Контекст ---
+TariffService --> "1" PricingStrategySelector
+TariffService --> "1" CommissionStrategyRegistry
+TariffService --> "1" TariffRepository
+TariffService --> "1" Calendar
+TariffService ..> PriceRequest : получает
+TariffService ..> PriceQuote : создаёт
+
+' --- Модель данных ---
+PlacementTerms --> PlacementModel
+PricingInput --> SubscriptionTariff
+PricingInput --> "0..1" PromoCode
+PriceQuote ..> PaymentSplit : to_payment_split()
+SubscriptionTariff --> Money
+TariffRepository ..> SubscriptionTariff
+TariffRepository ..> PlacementTerms
+TariffRepository ..> PromoCode
+
+note bottom of TariffService
+  Единственное место расчёта цены и комиссии.
+  Цена: из применимых стратегий выбирается дающая
+  наименьшую цену (скидки не суммируются).
+  Комиссия: стратегия по модели размещения зала
+  («комиссия или подписка», S4); подменяется
+  во время работы через use_commission_strategy().
+end note
+
+package "Ошибки и реализации портов для тестов (domain, adapters_memory)" {
+  class TariffError
+  class TariffNotFoundError
+  class PlacementTermsMissingError
+  class InvalidPromoCodeError
+  class InMemoryTariffRepository <<tests>> {
+    +add_promo(promo: PromoCode): None
+  }
+  class FixedCalendar <<tests>>
+}
+TariffNotFoundError --|> TariffError
+PlacementTermsMissingError --|> TariffError
+InvalidPromoCodeError --|> TariffError
+TariffService ..> TariffError : бросает
+PromoCodePricing ..> InvalidPromoCodeError : бросает
+InMemoryTariffRepository ..|> TariffRepository
+FixedCalendar ..|> Calendar
+
+legend right
+  <b>Условные обозначения</b>
+  ..|>  реализация интерфейса (у портов — структурная, typing.Protocol)
+  --|>  наследование
+  o--   агрегация: объект передаётся извне и живёт отдельно
+  *--   композиция: часть создаётся и живёт только внутри целого
+  -->   ассоциация: поле класса
+  ..>   зависимость: создаёт, читает, вызывает или бросает
+  interface — в Python: ABC с абстрактными методами или typing.Protocol
+  abstract class — ABC с общим кодом для наследников
+  «dataclass» — класс данных (@dataclass); «contract …» — общий тип на стыке контейнеров
+  «module» — функции модуля вне классов; «tests» — реализация только для тестов и демо
+  «core_db_repository» — глобальный ID компонента (глоссарий ЛР2), который реализует порт
+  + публичный, - приватный член; {static} — член класса
+endlegend
+
+@enduml

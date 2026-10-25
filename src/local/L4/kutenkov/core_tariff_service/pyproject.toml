@@ -1,0 +1,20 @@
+[project]
+name = "core-tariff-service"
+version = "0.1.0"
+description = "Компонент core_tariff_service контейнера core_api (C4 L4, ЛР3)"
+requires-python = ">=3.12"
+dependencies = ["pydantic>=2.6"]
+
+[project.optional-dependencies]
+dev = ["mypy>=1.10", "pytest>=8"]
+
+[tool.mypy]
+strict = true
+python_version = "3.12"
+mypy_path = ["src", "../../contracts/python"]
+packages = ["core_tariff_service"]
+plugins = ["pydantic.mypy"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src", "../../contracts/python"]
+testpaths = ["tests"]
