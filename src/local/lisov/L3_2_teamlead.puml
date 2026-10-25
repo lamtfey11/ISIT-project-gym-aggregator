@@ -26,7 +26,7 @@ Container_Boundary(iot_service, "Сервис допуска и загружен
 
   Boundary(infrastructure_layer, "Слой инфраструктуры (адаптеры к хранилищам и брокерам)") {
     Component(mqtt_gateway_comp, "Клиент MQTT-брокера", "aiomqtt, asyncio", "Держит соединение с брокером: подписывается на топики gym/{gym_id}/access и публикует команды допуска турникетам.")
-    Component(iot_repo_comp, "Репозиторий учёта посещений и истории загруженности", "SQLAlchemy 2.0", "Слой доступа к данным: события входа и выхода (турникет, сканер, ручная отметка) и история индекса загруженности.")
+    Component(iot_repo_comp, "Репозиторий учёта посещений и истории загруженности", "SQLAlchemy 2.0", "Слой доступа к данным: события входа и выхода (турникет, сканер, ручная отметка), параметры залов для расчёта загруженности и история индекса загруженности.")
     Component(iot_cache_comp, "Клиент кэша", "Python (клиент Redis)", "Хранит токены и признаки активации пропусков, текущее число посетителей, публикует актуальный индекс загруженности зала.")
     Component(iot_events_comp, "Шина событий", "Python, aio-pika (AMQP)", "Публикует access.passed; получает subscription.activated и gym.updated из собственной очереди.")
   }
@@ -55,7 +55,7 @@ Rel(access_comp, iot_repo_comp, "Сохраняет событие входа и
 Rel(access_comp, iot_events_comp, "Публикует access.passed", "Python Call")
 Rel(pass_comp, iot_cache_comp, "Сохраняет и читает токен и признак активации пропуска", "Python Call")
 Rel(occupancy_comp, iot_cache_comp, "Обновляет число посетителей, публикует индекс загруженности", "Python Call")
-Rel(occupancy_comp, iot_repo_comp, "Сохраняет и читает историю загруженности", "Python Call")
+Rel(occupancy_comp, iot_repo_comp, "Читает журнал входов и выходов, читает и сохраняет параметры зала (вместимость, стратегия), сохраняет историю загруженности", "Python Call")
 
 ' === ИСХОДЯЩИЕ СЕТЕВЫЕ ВЫЗОВЫ ===
 Rel(mqtt_gateway_comp, mqtt_broker, "Подписывается на топики gym/{gym_id}/access, публикует команды допуска", "MQTT / TCP, порт 1883, внутренняя сеть")
