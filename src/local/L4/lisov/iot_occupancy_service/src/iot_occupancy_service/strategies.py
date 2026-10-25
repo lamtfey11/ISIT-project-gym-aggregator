@@ -1,10 +1,3 @@
-"""Стратегии оценки числа посетителей в зале по событиям входа и выхода.
-
-Шаблон «Стратегия»: контекст OccupancyService зависит только от интерфейса
-OccupancyStrategy; конкретный алгоритм выбирается для каждого зала по имени
-и может быть заменён во время работы без изменения контекста (принцип OCP).
-"""
-
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -18,8 +11,6 @@ from .domain import OccupancyEvent
 
 
 class OccupancyStrategy(ABC):
-    """Интерфейс стратегии: сколько людей находится в зале в момент now."""
-
     @property
     @abstractmethod
     def name(self) -> str: ...
@@ -29,12 +20,6 @@ class OccupancyStrategy(ABC):
 
 
 class ExactBalanceStrategy(OccupancyStrategy):
-    """Точный баланс: число входов минус число выходов.
-
-    Подходит залам, где выход фиксируется надёжно (двусторонний турникет).
-    Выход без предшествующего входа не уводит счётчик ниже нуля.
-    """
-
     @property
     def name(self) -> str:
         return "exact_balance"
@@ -49,13 +34,6 @@ class ExactBalanceStrategy(OccupancyStrategy):
 
 
 class VisitTimeoutStrategy(OccupancyStrategy):
-    """Баланс по посетителям с коррекцией «забытых выходов».
-
-    Пара вход/выход сопоставляется по посетителю. Если после входа выход не
-    зафиксирован дольше max_visit (сбой сканера, выход вместе с другим клиентом),
-    посетитель считается ушедшим. Повторный вход без выхода не удваивает счётчик.
-    """
-
     def __init__(self, max_visit: timedelta = timedelta(hours=3)) -> None:
         if max_visit <= timedelta(0):
             raise ValueError("max_visit должен быть положительным")
@@ -79,13 +57,6 @@ class VisitTimeoutStrategy(OccupancyStrategy):
 
 
 class SmoothedStrategy(OccupancyStrategy):
-    """Сглаживание поверх любой базовой стратегии (композиция стратегий).
-
-    Среднее значение базовой оценки по точкам за последние window минут.
-    Индекс не «прыгает» от одиночного входа или выхода, а клиент видит
-    устойчивую картину при выборе времени визита.
-    """
-
     def __init__(
         self,
         base: OccupancyStrategy,
@@ -112,8 +83,6 @@ class SmoothedStrategy(OccupancyStrategy):
 
 
 class OccupancyStrategyRegistry:
-    """Реестр стратегий по имени: точка подключения новых алгоритмов без правки контекста."""
-
     def __init__(self) -> None:
         self._strategies: dict[str, OccupancyStrategy] = {}
 
