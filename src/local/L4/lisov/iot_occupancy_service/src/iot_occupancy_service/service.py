@@ -1,3 +1,5 @@
+"""Контекст шаблона «Стратегия»: сервис индекса загруженности (компонент iot_occupancy_service)."""
+
 from __future__ import annotations
 
 from dataclasses import replace
@@ -13,6 +15,14 @@ from .strategies import OccupancyStrategyRegistry
 
 
 class OccupancyService:
+    """Пересчитывает индекс после каждого входа или выхода и публикует его.
+
+    Индекс показывается клиенту, только если данных достаточно (UC13 подключён
+    через extend): у зала задана вместимость и он передаёт события не меньше
+    warmup. Алгоритм оценки числа посетителей выбирается для зала по имени
+    стратегии и подменяется во время работы.
+    """
+
     def __init__(
         self,
         registry: OccupancyStrategyRegistry,
@@ -39,9 +49,11 @@ class OccupancyService:
         self._scale = scale or OccupancyScale()
 
     def on_access(self, event: OccupancyEvent) -> OccupancySnapshot:
+        """Вызывается сервисом допуска после регистрации входа или выхода."""
         return self.recalculate(event.gym_id)
 
     def apply_gym_update(self, update: GymUpdated) -> None:
+        """Обработка события gym.updated: вместимость и время закрытия зала."""
         current = self._settings.get(update.gym_id)
         if current is None:
             current = GymOccupancySettings(
@@ -56,6 +68,7 @@ class OccupancyService:
         self._settings.save(current)
 
     def use_strategy(self, gym_id: UUID, strategy_name: str) -> None:
+        """Динамическая подмена алгоритма для конкретного зала."""
         self._registry.get(strategy_name)
         current = self._settings.get(gym_id)
         if current is None:
@@ -88,6 +101,7 @@ class OccupancyService:
         return snapshot
 
     def _since(self, settings: GymOccupancySettings, now: datetime) -> datetime:
+        """Начало окна наблюдения: не раньше последнего закрытия зала (ночной сброс)."""
         since = now - self._window
         if settings.closing_time is not None:
             closing_today = now.replace(

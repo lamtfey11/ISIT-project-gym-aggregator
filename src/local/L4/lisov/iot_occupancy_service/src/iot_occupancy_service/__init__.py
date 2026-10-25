@@ -1,3 +1,5 @@
+"""Компонент iot_occupancy_service «Сервис индекса загруженности» контейнера iot_service (C4 L4)."""
+
 from .domain import GymOccupancySettings, OccupancyEvent, OccupancySnapshot, OccupancyStatus
 from .scale import OccupancyScale
 from .service import OccupancyService
