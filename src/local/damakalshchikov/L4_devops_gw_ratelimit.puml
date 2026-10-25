@@ -1,0 +1,212 @@
+@startuml L4_gw_ratelimit
+
+title Диаграмма кода (C4, уровень 4): компонент «Модуль ограничения нагрузки» (gw_ratelimit)
+
+hide empty members
+top to bottom direction
+skinparam nodesep 40
+skinparam ranksep 60
+
+package "Контракты на стыках (contracts/ts)" <<Frame>> {
+  interface RateLimitedError <<contract 429>> {
+    +error: "rate_limited"
+    +retry_after: number
+  }
+}
+
+package "njs (nginx JavaScript)" <<Frame>> {
+  interface NginxHTTPRequest <<njs>> {
+    +method: string
+    +uri: string
+    +remoteAddress: string
+    +headersIn: Record<string, string | undefined>
+    +headersOut: Record<string, string | string[] | undefined>
+    +return(status: number, body?: string): void
+    +internalRedirect(uri: string): void
+  }
+  interface NgxSharedDict <<njs>> {
+    +get(key: string): number | undefined
+    +set(key: string, value: number, timeout?: number): NgxSharedDict
+    +incr(key: string, delta: number, init?: number, timeout?: number): number
+  }
+}
+
+package "Предметная модель" {
+  interface RequestInfo {
+    +method: string
+    +path: string
+    +clientIp: string
+    +authorization: string | null
+  }
+  interface LimitSpec {
+    +limit: number
+    +periodSec: number
+    +burst?: number
+  }
+  interface LimitDecision {
+    +allowed: boolean
+    +remaining: number
+    +retryAfterSec: number
+  }
+  interface GatewayDecision {
+    +allowed: boolean
+    +policyName: string
+    +next: NextHop
+    +retryAfterSec: number
+    +headers: Record<string, string>
+  }
+  enum NextHop <<type>> {
+    "@user_api"
+    "@partner"
+  }
+  class domain <<module>> {
+    +validateSpec(spec: LimitSpec): LimitSpec
+  }
+  class Error <<built-in>>
+  class RateLimitConfigError
+}
+
+package "Алгоритмы (Strategy № 1)" {
+  interface RateLimitAlgorithm {
+    +name: string
+    +check(key: string, spec: LimitSpec, nowMs: number, store: CounterStore): LimitDecision
+  }
+  class FixedWindowAlgorithm {
+    +name = "fixed_window"
+  }
+  class SlidingWindowAlgorithm {
+    +name = "sliding_window"
+  }
+  class TokenBucketAlgorithm {
+    +name = "token_bucket"
+  }
+}
+
+package "Ключ клиента (Strategy № 2)" {
+  interface ClientKeyStrategy {
+    +name: string
+    +keyFor(request: RequestInfo): string
+  }
+  class IpKeyStrategy {
+    +name = "ip"
+  }
+  class BearerTokenKeyStrategy {
+    +name = "bearer_token"
+  }
+  class fnv1a <<function>> {
+    +fnv1a(text: string): string
+  }
+}
+
+package "Политики маршрутов" {
+  class RoutePolicy {
+    +name: string
+    +pathPrefix: string
+    +methods: string[] | null
+    +algorithm: RateLimitAlgorithm
+    +spec: LimitSpec
+    +keyStrategy: ClientKeyStrategy
+    +next: NextHop
+    +matches(request: RequestInfo): boolean
+  }
+}
+
+package "Контекст" {
+  class RateLimiter {
+    -policies: RoutePolicy[]
+    -store: CounterStore
+    -clock: Clock
+    +check(request: RequestInfo): GatewayDecision | null
+    +useAlgorithm(policyName: string, algorithm: RateLimitAlgorithm): void
+    +useKeyStrategy(policyName: string, keyStrategy: ClientKeyStrategy): void
+  }
+  class gw_ratelimit <<module njs entry>> {
+    +handle(r: NginxHTTPRequest): void
+    +toRequestInfo(r: NginxHTTPRequest): RequestInfo
+    -getLimiter(): RateLimiter
+  }
+  class limiter <<module>> {
+    +rateLimitedBody(decision: GatewayDecision): RateLimitedError
+  }
+  class policies <<module>> {
+    +buildDefaultPolicies(): RoutePolicy[]
+  }
+}
+
+package "Порты" {
+  interface CounterStore {
+    +get(key: string): number | undefined
+    +set(key: string, value: number, ttlMs: number): void
+    +incr(key: string, delta: number, init: number, ttlMs: number): number
+  }
+  interface Clock {
+    +nowMs(): number
+  }
+  class NjsSharedDictStore {
+    -dict: NgxSharedDict
+  }
+  class InMemoryCounterStore <<tests>>
+  class SystemClock
+  class ManualClock <<tests>> {
+    +advance(ms: number): void
+  }
+}
+
+' --- Strategy № 1 ---
+FixedWindowAlgorithm ..|> RateLimitAlgorithm
+SlidingWindowAlgorithm ..|> RateLimitAlgorithm
+TokenBucketAlgorithm ..|> RateLimitAlgorithm
+RateLimitAlgorithm ..> LimitSpec : читает
+RateLimitAlgorithm ..> LimitDecision : создаёт
+RateLimitAlgorithm ..> CounterStore : использует
+
+' --- Strategy № 2 ---
+IpKeyStrategy ..|> ClientKeyStrategy
+BearerTokenKeyStrategy ..|> ClientKeyStrategy
+BearerTokenKeyStrategy o-- "1" ClientKeyStrategy : -fallback
+BearerTokenKeyStrategy ..> fnv1a : хэш токена
+ClientKeyStrategy ..> RequestInfo : читает
+
+' --- Политики и контекст ---
+RoutePolicy o-- "1" RateLimitAlgorithm
+RoutePolicy o-- "1" ClientKeyStrategy
+RoutePolicy *-- "1" LimitSpec
+RoutePolicy --> NextHop
+RoutePolicy ..> domain : validateSpec(spec)
+RateLimiter o-- "1..*" RoutePolicy
+RateLimiter --> "1" CounterStore
+RateLimiter --> "1" Clock
+RateLimiter ..> GatewayDecision : создаёт
+RateLimiter ..> RateLimitConfigError : бросает
+
+' --- Проверка параметров и ошибки ---
+domain ..> LimitSpec : проверяет
+domain ..> RateLimitConfigError : бросает
+RateLimitConfigError --|> Error
+
+' --- Порты ---
+NjsSharedDictStore ..|> CounterStore
+InMemoryCounterStore ..|> CounterStore
+InMemoryCounterStore ..> Clock : срок жизни ключей
+SystemClock ..|> Clock
+ManualClock ..|> Clock
+NjsSharedDictStore --> NgxSharedDict
+
+' --- Точка входа njs ---
+gw_ratelimit --> "1" RateLimiter
+gw_ratelimit ..> NginxHTTPRequest : headersOut, internalRedirect(next) | return(429)
+gw_ratelimit ..> limiter : тело 429
+limiter ..> RateLimitedError : создаёт
+gw_ratelimit ..> policies : политики по умолчанию
+policies ..> RoutePolicy : создаёт
+
+note bottom of RateLimiter
+  Первая подходящая политика выигрывает:
+  auth_login - fixed_window, ключ ip;
+  access_marks (сканер админа) - token_bucket, всплеск 30;
+  payment_webhooks, bi_read - sliding_window, ip, далее @partner;
+  user_api - sliding_window, ключ bearer_token.
+  Алгоритм и ключ подменяются во время работы.
+end note
+
+@enduml
