@@ -1,0 +1,216 @@
+@startuml L4_adm_access_controller
+' C4 Level 4 (Code). Нотация: UML Class Diagram.
+' Компонент adm_access_controller контейнера admin_web. Автор: Осипов И.
+' Имена классов и методов совпадают с кодом src/*.ts.
+
+title Диаграмма кода (C4, уровень 4): компонент «Контроллер допуска» (adm_access_controller; на L3 — тот же ID) контейнера «Веб-панель администрирования» (admin_web)
+
+hide empty members
+left to right direction
+
+package "Контракты на стыках (contracts/ts)" <<Frame>> {
+  interface AdminAccessMarkRequest <<contract admin_web → iot_service>> {
+    +gym_id: string
+    +method: MarkMethod
+    +direction: Direction
+    +pass_token: string | null
+    +user_id: string | null
+    +note: string | null
+    +idempotency_key: string
+    +client_time: string
+  }
+  interface AccessMarkResult <<contract>> {
+    +decision: "ALLOWED" | "DENIED"
+    +direction: Direction
+    +reason: string | null
+    +visit_event_id: string | null
+  }
+  enum MarkMethod <<type>> {
+    SCAN
+    MANUAL
+  }
+  enum Direction <<type>> {
+    IN
+    OUT
+  }
+}
+
+package "Предметная модель" {
+  interface MarkInput {
+    +gymId: string
+    +direction: Direction
+    +passToken?: string
+    +userId?: string
+    +note?: string
+  }
+  interface MarkOutcome {
+    +status: MarkStatus
+    +method: MarkMethod | null
+    +direction: Direction
+    +idempotencyKey: string | null
+    +message: string
+    +result: AccessMarkResult | null
+    +retryAfterSec: number | null
+  }
+  enum MarkStatus <<type>> {
+    ALLOWED
+    DENIED
+    QUEUED
+    INVALID
+    RATE_LIMITED
+    FAILED
+  }
+  class NetworkError
+  class RateLimitedApiError {
+    +retryAfterSec: number
+  }
+  class UnknownModeError
+}
+
+package "Режимы отметки (Strategy № 1)" {
+  interface MarkModeStrategy {
+    +name: string
+    +method: MarkMethod
+    +validate(input: MarkInput): string[]
+    +buildRequest(input: MarkInput, meta: RequestMeta): AdminAccessMarkRequest
+  }
+  class ScanMarkStrategy {
+    -scannerPrefix: string
+    +name = "scan"
+    +method = "SCAN"
+  }
+  class ManualMarkStrategy {
+    +name = "manual"
+    +method = "MANUAL"
+  }
+  interface RequestMeta {
+    +idempotencyKey: string
+    +clientTime: string
+  }
+}
+
+package "Политики доставки (Strategy № 2)" {
+  interface DeliveryPolicy {
+    +name: string
+    +deliver(request: AdminAccessMarkRequest, api: AccessApi, pending: PendingMarksStore): Promise<DeliveryResult>
+  }
+  class OnlineOnlyDelivery {
+    +name = "online_only"
+  }
+  class QueueExitsOfflineDelivery {
+    +name = "queue_exits_offline"
+  }
+  interface DeliveryResult <<union>> {
+    +kind: "delivered" | "queued"
+    +result?: AccessMarkResult
+  }
+}
+
+package "Контекст" {
+  class AccessController {
+    -modes: Map<string, MarkModeStrategy>
+    -mode: MarkModeStrategy
+    -delivery: DeliveryPolicy
+    +setMode(name: string): void
+    +setDirection(direction: Direction): void
+    +useDeliveryPolicy(policy: DeliveryPolicy): void
+    +submit(input: MarkInput): Promise<MarkOutcome>
+    +flushPending(): Promise<number>
+  }
+}
+
+package "Состояние экрана (Redux)" {
+  interface AccessState {
+    +mode: string
+    +direction: Direction
+    +deliveryPolicy: string
+    +submitting: boolean
+    +last: MarkOutcome | null
+    +journal: MarkOutcome[]
+    +pendingCount: number
+  }
+  class accessSlice <<module>> {
+    +accessReducer(state: AccessState, action: AccessAction): AccessState
+    +initialAccessState: AccessState
+  }
+  interface AccessAction <<union>> {
+    +type: "access/..."
+  }
+}
+
+package "Порты: соседние компоненты admin_web" {
+  interface AccessApi <<adm_api_client>> {
+    +mark(request: AdminAccessMarkRequest): Promise<AccessMarkResult>
+  }
+  interface PendingMarksStore <<adm_state_store>> {
+    +add(request: AdminAccessMarkRequest): void
+    +list(): AdminAccessMarkRequest[]
+    +remove(idempotencyKey: string): void
+  }
+  interface IdGenerator {
+    +next(): string
+  }
+  interface Clock {
+    +nowIso(): string
+  }
+}
+
+' --- Strategy № 1 ---
+ScanMarkStrategy ..|> MarkModeStrategy
+ManualMarkStrategy ..|> MarkModeStrategy
+MarkModeStrategy ..> MarkInput : читает
+MarkModeStrategy ..> AdminAccessMarkRequest : создаёт
+MarkModeStrategy ..> RequestMeta
+MarkModeStrategy --> MarkMethod
+
+' --- Strategy № 2 ---
+OnlineOnlyDelivery ..|> DeliveryPolicy
+QueueExitsOfflineDelivery ..|> DeliveryPolicy
+DeliveryPolicy ..> DeliveryResult : создаёт
+DeliveryPolicy ..> AccessApi : вызывает
+QueueExitsOfflineDelivery ..> PendingMarksStore : кладёт выходы
+QueueExitsOfflineDelivery ..> NetworkError : перехватывает
+
+' --- Контекст ---
+AccessController o-- "1..*" MarkModeStrategy
+AccessController o-- "1" DeliveryPolicy
+AccessController --> "1" AccessApi
+AccessController --> "1" PendingMarksStore
+AccessController --> "1" IdGenerator
+AccessController --> "1" Clock
+AccessController ..> accessSlice : dispatch(AccessAction)
+AccessController ..> MarkOutcome : создаёт
+AccessController ..> RateLimitedApiError : перехватывает (429 шлюза)
+AccessController ..> UnknownModeError : бросает
+accessSlice ..> AccessState
+accessSlice ..> AccessAction
+MarkOutcome --> MarkStatus
+AccessMarkResult --> Direction
+
+note bottom of AccessController
+  «Сканирование» — основной режим: строка с ручного
+  сканера QR (HID, ввод как с клавиатуры) на входе и выходе.
+  «Ручная отметка» — если у клиента не сгенерировался QR;
+  причина обязательна. Без связи выход сохраняется и
+  отправляется повторно с тем же idempotency_key,
+  вход без проверки пропуска не допускается.
+end note
+
+
+legend right
+  <b>Условные обозначения</b>
+  ..|>  реализация интерфейса (implements)
+  --|>  наследование (extends)
+  o--   агрегация: объект передаётся извне и живёт отдельно
+  *--   композиция: часть создаётся и живёт только внутри целого
+  -->   ассоциация: поле класса
+  ..>   зависимость: создаёт, читает, вызывает или бросает
+  interface — интерфейс TypeScript; enum «type» — объединение строковых литералов
+  «union» — размеченное объединение типов; «module» — функции модуля вне классов
+  «contract …» — общий тип на стыке контейнеров (contracts/ts)
+  «njs» — тип среды nginx JavaScript; «tests» — реализация только для тестов
+  «adm_api_client» и т. п. — глобальный ID компонента (глоссарий ЛР2), который реализует порт
+  + публичный, - приватный член
+endlegend
+
+@enduml
