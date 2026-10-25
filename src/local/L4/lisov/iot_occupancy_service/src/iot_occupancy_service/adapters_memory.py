@@ -1,8 +1,3 @@
-"""Реализации портов в памяти: для тестов и демонстрации прототипа.
-
-В рабочей системе порты реализуют компоненты iot_repository и iot_cache_client.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Sequence

@@ -1,5 +1,3 @@
-"""Тесты iot_occupancy_service. Запуск: python -m unittest (или pytest)."""
-
 from __future__ import annotations
 
 import unittest
@@ -93,8 +91,6 @@ class StrategiesTest(unittest.TestCase):
 
 
 class ConstantStrategy(OccupancyStrategy):
-    """Новая стратегия, добавленная без изменения OccupancyService (проверка OCP)."""
-
     @property
     def name(self) -> str:
         return "constant"

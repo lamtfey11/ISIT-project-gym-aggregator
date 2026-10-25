@@ -1,5 +1,3 @@
-"""Модель предметной области компонента iot_occupancy_service."""
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -12,7 +10,6 @@ from fitagg_contracts import AccessPassed, Direction
 
 @dataclass(frozen=True, slots=True)
 class OccupancyEvent:
-    """Вход или выход посетителя (турникет, сканер администратора или ручная отметка)."""
 
     gym_id: UUID
     visitor_id: UUID
@@ -31,7 +28,6 @@ class OccupancyEvent:
 
 @dataclass(frozen=True, slots=True)
 class GymOccupancySettings:
-    """Параметры зала для расчёта: вместимость, выбранная стратегия, время закрытия."""
 
     gym_id: UUID
     capacity: int
@@ -51,7 +47,6 @@ class OccupancyStatus(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class OccupancySnapshot:
-    """Результат расчёта, который публикуется в кэш и сохраняется в историю."""
 
     gym_id: UUID
     status: OccupancyStatus
