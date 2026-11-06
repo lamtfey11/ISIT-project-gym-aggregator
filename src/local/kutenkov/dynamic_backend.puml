@@ -1,0 +1,51 @@
+@startuml dynamic_backend
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Dynamic.puml
+
+LAYOUT_WITH_LEGEND()
+title Динамическая диаграмма (локальное представление, backend): проверка токена и оформление заказа абонемента с запросом платежа
+
+Container_Ext(api_gateway, "API-шлюз", "Nginx", "gw_authcheck, gw_router")
+ContainerDb_Ext(cache, "Кэш и хранилище сессий", "Redis 7", "Сессии и отозванные токены")
+ContainerDb_Ext(database, "Реляционная СУБД", "PostgreSQL 16 + PostGIS 3", "Тарифы, условия размещения, заказы")
+ContainerQueue_Ext(message_broker, "Брокер сообщений", "RabbitMQ 3", "Доменные события")
+Container_Ext(integration_service, "Сервис интеграций и уведомлений", "Python 3.12 / FastAPI", "int_internal_api")
+
+Container_Boundary(auth_service, "Сервис авторизации (auth_service)") {
+  Component(auth_api, "API аутентификации", "FastAPI", "GET /auth/verify")
+  Component(auth_authn_service, "Сервис аутентификации", "Python 3.12", "Проверка подписи и срока JWT")
+  Component(auth_session_service, "Сервис сессий", "Python 3.12", "Проверка отзыва токена")
+  Component(auth_cache_repository, "Репозиторий сессий", "redis-py", "Доступ к сессиям")
+}
+
+Container_Boundary(core_api, "Сервис бизнес-логики (core_api)") {
+  Component(core_booking_api, "API заказов и абонементов", "FastAPI", "POST /api/v1/orders")
+  Component(core_payment_api, "API оплаты заказа", "FastAPI", "POST /api/v1/orders/{id}/payments")
+  Component(core_booking_service, "Сервис абонементов", "Python 3.12", "Жизненный цикл заказа")
+  Component(core_tariff_service, "Сервис тарификации", "Python 3.12 (TariffService)", "Цена и разбивка суммы, стратегии цены и комиссии")
+  Component(core_payment_service, "Сервис оплат", "Python 3.12", "Оркестрирует платёж")
+  Component(core_db_repository, "Репозиторий БД", "SQLAlchemy 2.0", "Таблицы core_api")
+  Component(core_integration_adapter, "Адаптер сервиса интеграций", "httpx", "Клиент int_internal_api")
+  Component(core_event_bus, "Шина событий", "aio-pika (AMQP)", "Публикует order.created")
+}
+
+Rel(api_gateway, auth_api, "Подзапрос GET /auth/verify, Authorization: Bearer <JWT>", "HTTP/JSON, TCP 8001")
+Rel(auth_api, auth_authn_service, "verify_access_token(token)", "Python Call")
+Rel(auth_authn_service, auth_session_service, "is_revoked(jti)", "Python Call")
+Rel(auth_session_service, auth_cache_repository, "get_session(jti)", "Python Call")
+Rel(auth_cache_repository, cache, "GET session:{jti}", "RESP/TCP, TCP 6379")
+Rel(auth_api, api_gateway, "200 OK, X-User-Id, X-User-Role (иначе 401)", "HTTP/JSON, TCP 8001")
+Rel(api_gateway, core_booking_api, "POST /api/v1/orders {tariff_id}, Idempotency-Key, X-User-Id", "HTTP/JSON, TCP 8000")
+Rel(core_booking_api, core_booking_service, "create_order(user_id, tariff_id, idempotency_key)", "Python Call")
+Rel(core_booking_service, core_tariff_service, "TariffService.quote(PriceRequest) - PriceQuote", "Python Call")
+Rel(core_tariff_service, core_db_repository, "TariffRepository: тариф абонемента и условия размещения зала", "Python Call")
+Rel(core_db_repository, database, "SELECT tariffs, placement_terms", "SQL/TCP, TCP 5432")
+Rel(core_booking_service, core_db_repository, "save_order(order: pending, total, gym_share, platform_commission)", "Python Call")
+Rel(core_db_repository, database, "INSERT INTO orders (уникальный idempotency_key)", "SQL/TCP, TCP 5432")
+Rel(core_booking_service, core_event_bus, "publish(OrderCreated)", "Python Call")
+Rel(core_event_bus, message_broker, "Публикует order.created", "AMQP, TCP 5672")
+Rel(api_gateway, core_payment_api, "POST /api/v1/orders/{order_id}/payments", "HTTP/JSON, TCP 8000")
+Rel(core_payment_api, core_payment_service, "create_payment(order_id)", "Python Call")
+Rel(core_payment_service, core_integration_adapter, "request_payment(PaymentSplit)", "Python Call")
+Rel(core_integration_adapter, integration_service, "POST /internal/payments, PaymentSplit (total = gym_share + platform_commission)", "HTTP/JSON, TCP 8002")
+
+@enduml

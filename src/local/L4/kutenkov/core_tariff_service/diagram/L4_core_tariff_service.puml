@@ -14,7 +14,7 @@ package "Контракты на стыках (fitagg_contracts)" <<Frame>> {
     +currency: Literal["RUB"]
     +{static} rub(rubles: int, kopecks: int): Money
   }
-  class PaymentSplit <<contract core_api → integration_service>> {
+  class PaymentSplit <<contract core_api - integration_service>> {
     +order_id: UUID
     +total: Money
     +gym_share: Money
