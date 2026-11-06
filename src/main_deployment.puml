@@ -1,0 +1,106 @@
+@startuml main_deployment
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Deployment.puml
+
+LAYOUT_LEFT_RIGHT()
+title Сводная диаграмма развёртывания (Level 2, среда production) ИС "Агрегатор фитнес-клубов"
+
+' === КЛИЕНТСКИЕ УСТРОЙСТВА ===
+Deployment_Node(phone, "Смартфон клиента", "Android 9+ / iOS 15+") {
+  Container(mobile_app, "Мобильное приложение клиента", "React Native / TypeScript", "Устанавливается из RuStore, Google Play, App Store")
+}
+Deployment_Node(staff_pc, "Рабочее место сотрудника", "ПК у стойки зала или в офисе платформы; ручной сканер QR по USB/Bluetooth HID") {
+  Deployment_Node(browser, "Браузер", "Chrome / Firefox / Яндекс Браузер") {
+    Container(admin_web, "Веб-панель администрирования", "React 18 SPA", "Статика отдаётся тем же Nginx по 443")
+  }
+}
+
+' === ПАРТНЁРСКИЙ ЗАЛ ===
+Deployment_Node(gym_site, "Партнёрский зал", "Локальная сеть зала, выход в Интернет") {
+  System_Ext(access_control, "СКУД и датчики залов", "Контроллер турникета, MQTT-клиент с клиентским сертификатом зала")
+}
+
+' === ОБЛАКО ===
+Deployment_Node(yc, "Yandex Cloud, регион ru-central1", "VPC fitagg-prod; данные хранятся в РФ (ФЗ-152)") {
+  Deployment_Node(dmz, "Публичная подсеть 10.10.1.0/24", "Группа безопасности sg-edge: входящие только 443/TCP и 8883/TCP") {
+    Deployment_Node(edge, "edge-1", "Ubuntu 24.04 LTS VM, 2 vCPU / 4 GB, Docker Engine") {
+      Container(api_gateway, "API-шлюз", "Nginx 1.27 + njs", "TLS 1.3, сертификат Let's Encrypt; upstream с двумя экземплярами каждого сервиса, least_conn")
+      ContainerQueue(mqtt_broker, "MQTT-брокер", "Eclipse Mosquitto 2.0", "8883 MQTTS снаружи, 1883 внутри; persistent sessions (R-05)")
+    }
+  }
+  Deployment_Node(app_net, "Приватная подсеть приложений 10.10.2.0/24", "sg-app: 8000-8004 только из sg-edge; выход в Интернет через NAT-шлюз") {
+    Deployment_Node(app, "app-1, app-2 (x2)", "Ubuntu 24.04 LTS VM, 4 vCPU / 8 GB, Docker Compose; одинаковый состав на обеих ВМ") {
+      Container(auth_service, "Сервис авторизации", "Python 3.12 / FastAPI, uvicorn", ":8001, без состояния")
+      Container(core_api, "Сервис бизнес-логики", "Python 3.12 / FastAPI", ":8000, без состояния")
+      Container(integration_service, "Сервис интеграций и уведомлений", "Python 3.12 / FastAPI, Celery", ":8002; Celery beat только на app-1")
+      Container(iot_service, "Сервис допуска и загруженности", "Python 3.12 / FastAPI, aiomqtt", ":8004; общая MQTT-подписка $share/iot")
+      Container(analytics_service, "Сервис отчётности", "Python 3.12 / FastAPI, pandas", ":8003")
+    }
+    Deployment_Node(etl_vm, "etl-1", "Ubuntu 24.04 LTS VM, 4 vCPU / 8 GB, Docker Compose") {
+      Container(etl_service, "Сервис загрузки данных (ETL)", "Apache Airflow 2 (scheduler, worker), pandas", "Один экземпляр: пакетные загрузки с повтором при сбое")
+    }
+    Deployment_Node(mon_vm, "mon-1", "Ubuntu 24.04 LTS VM, 2 vCPU / 8 GB, Docker Compose") {
+      Container(monitoring, "Система наблюдаемости", "Prometheus, Alertmanager, Grafana, Loki", "Grafana :3000 доступна только через VPN-шлюз облака")
+    }
+  }
+  Deployment_Node(data_net, "Приватная подсеть данных 10.10.3.0/24", "sg-data: 5432, 6379, 5672, 8123, 9000 только из sg-app") {
+    Deployment_Node(db1, "db-1 (Master)", "Ubuntu 24.04 LTS VM, 4 vCPU / 16 GB, SSD") {
+      ContainerDb(database, "Реляционная СУБД", "PostgreSQL 16 + PostGIS 3", "Все записи; wal-g: полная копия раз в сутки и архив WAL в бакет Object Storage (R-02)")
+    }
+    Deployment_Node(db2, "db-2 (Replica, hot standby)", "Ubuntu 24.04 LTS VM, 4 vCPU / 16 GB, SSD") {
+      ContainerDb(database_replica, "Реплика СУБД", "PostgreSQL 16 + PostGIS 3", "Потоковая репликация; чтение геопоиска; повышение до мастера при отказе (R-03)")
+    }
+    Deployment_Node(infra_vm, "infra-1", "Ubuntu 24.04 LTS VM, 4 vCPU / 8 GB, Docker Compose") {
+      ContainerDb(cache, "Кэш и хранилище сессий", "Redis 7", "AOF раз в секунду")
+      ContainerQueue(message_broker, "Брокер сообщений", "RabbitMQ 3.13", "Durable-очереди, подтверждения публикации")
+      ContainerDb(object_storage, "Объектное хранилище", "MinIO (S3 API)", "Ежедневное зеркало в бакет резервных копий (R-02)")
+    }
+    Deployment_Node(dwh_vm, "dwh-1", "Ubuntu 24.04 LTS VM, 4 vCPU / 16 GB") {
+      ContainerDb(dwh, "Аналитическое хранилище и витрины", "ClickHouse 24", "Только чтение для BI-пользователя")
+    }
+  }
+}
+
+' === ВНЕШНИЕ ПРОВАЙДЕРЫ И ОФИС ===
+Deployment_Node(internet, "Внешние провайдеры (Интернет)", "SaaS по HTTPS") {
+  System_Ext(payment_gateway, "Платёжный шлюз", "Эквайринг с маркетплейс-схемой")
+  System_Ext(notification_gateway, "Сервисы доставки уведомлений", "FCM / APNs, SMS-шлюз, SMTP")
+  System_Ext(idp, "Провайдер идентификации", "VK ID / Sber ID")
+  System_Ext(maps_service, "Картографический сервис", "Яндекс Карты / 2ГИС")
+  System_Ext(bi_platform, "BI-платформа", "Yandex DataLens")
+}
+Deployment_Node(office, "Офис компании-оператора", "Связан с VPC через VPN-шлюз облака (IPsec)") {
+  System_Ext(accounting_system, "Система бухгалтерского учёта", "1С:Бухгалтерия, сервер 1С")
+}
+
+' === ВХОДЯЩИЕ ИЗ ИНТЕРНЕТА (только 443 и 8883, S-05) ===
+Rel(mobile_app, api_gateway, "Запросы к API", "HTTPS / TLS 1.3, порт 443")
+Rel(admin_web, api_gateway, "Загрузка SPA и запросы к API", "HTTPS / TLS 1.3, порт 443")
+Rel(payment_gateway, api_gateway, "Webhook статуса платежа (allowlist адресов эквайера)", "HTTPS / TLS 1.3, порт 443")
+Rel(bi_platform, api_gateway, "Чтение витрин", "HTTPS / TLS 1.3, порт 443")
+Rel(access_control, mqtt_broker, "События прохода и команды допуска (mTLS, сертификат зала)", "MQTTS / TLS 1.2+, порт 8883")
+Rel(mobile_app, payment_gateway, "Данные карты через SDK, минуя наши узлы (C-01)", "HTTPS, порт 443")
+
+' === ВНУТРИ VPC ===
+Rel(api_gateway, app, "Проксирование: 8001 auth, 8000 core, 8002 integration, 8003 analytics, 8004 iot", "HTTP/JSON, порты 8000-8004")
+Rel(api_gateway, dwh, "Запросы BI (пользователь только на чтение)", "HTTP, порт 8123")
+Rel(iot_service, mqtt_broker, "Подписка на gym/+/access, команды допуска", "MQTT / TCP, порт 1883")
+Rel(app, database, "Запись и чтение", "SQL/TCP + TLS, порт 5432")
+Rel(core_api, database_replica, "Чтение каталога и геопоиска", "SQL/TCP + TLS, порт 5432")
+Rel(database, database_replica, "Потоковая репликация WAL", "TCP, порт 5432")
+Rel(app, infra_vm, "Кэш 6379, события 5672, файлы 9000", "RESP/TCP, AMQP, HTTPS (S3)")
+Rel(etl_service, database, "Выгрузка справочников и реестра выплат", "SQL/TCP + TLS, порт 5432")
+Rel(etl_service, message_broker, "Очередь событий etl", "AMQP, порт 5672")
+Rel(etl_service, dwh, "Загрузка витрин", "HTTP, порт 8123")
+Rel(analytics_service, dwh, "Аналитические запросы", "HTTP, порт 8123")
+Rel(monitoring, app, "Опрос /metrics всех сервисов, сбор логов агентом Alloy", "HTTP GET /metrics")
+
+' === ИСХОДЯЩИЕ ЧЕРЕЗ NAT / VPN ===
+Rel(integration_service, payment_gateway, "Платежи, возвраты, выплаты", "HTTPS/REST, порт 443")
+Rel(integration_service, notification_gateway, "Push, SMS, e-mail", "HTTPS 443, SMTP/TLS 465")
+Rel(auth_service, idp, "Обмен кода на профиль", "HTTPS, OAuth 2.0 / OIDC, порт 443")
+Rel(integration_service, maps_service, "Геокодирование", "HTTPS/REST, порт 443")
+Rel(monitoring, notification_gateway, "Оповещения об инцидентах", "SMTP/TLS, порт 465")
+Rel(analytics_service, accounting_system, "Реестры начислений", "HTTPS/REST, XML через VPN (IPsec)")
+
+SHOW_LEGEND()
+@enduml

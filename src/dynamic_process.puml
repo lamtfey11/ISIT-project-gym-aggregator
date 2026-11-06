@@ -1,0 +1,67 @@
+@startuml dynamic_process
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Dynamic.puml
+
+LAYOUT_WITH_LEGEND()
+title Сводная динамическая диаграмма: покупка абонемента от нажатия «Оплатить» до QR-пропуска и витрины выручки
+
+Person(client, "Клиент", "Покупает абонемент в мобильном приложении")
+System_Ext(payment_gateway, "Платёжный шлюз", "Эквайринг с маркетплейс-схемой")
+System_Ext(notification_gateway, "Сервисы доставки уведомлений", "FCM / APNs")
+
+System_Boundary(gym_aggregator, "ИС-агрегатор фитнес-клубов") {
+  ' Осипов И. (frontend)
+  Container(mobile_app, "Мобильное приложение клиента", "React Native / TypeScript", "mob_purchase_controller, mob_payment_adapter, mob_pass_service")
+  ' Дамакальщиков М. (DevOps)
+  Container(api_gateway, "API-шлюз", "Nginx + njs", "gw_tls, gw_ratelimit, gw_authcheck, gw_partner, gw_router")
+  ContainerQueue(message_broker, "Брокер сообщений", "RabbitMQ 3", "Topic-обменник fitagg.events, своя очередь у каждого подписчика")
+  ' Кутенков С. (backend)
+  Container(auth_service, "Сервис авторизации", "Python 3.12 / FastAPI", "auth_api, auth_authn_service, auth_session_service")
+  Container(core_api, "Сервис бизнес-логики", "Python 3.12 / FastAPI", "core_booking_service, core_tariff_service, core_payment_service")
+  ' Лисов М. (тимлид)
+  Container(integration_service, "Сервис интеграций и уведомлений", "Python 3.12 / FastAPI", "int_payment_service, int_notification_service")
+  Container(iot_service, "Сервис допуска и загруженности", "Python 3.12 / FastAPI, asyncio", "iot_pass_service")
+  ContainerDb(database, "Реляционная СУБД", "PostgreSQL 16 + PostGIS 3", "Заказы, абонементы, платежи")
+  ContainerDb(cache, "Кэш и хранилище сессий", "Redis 7", "Признак активности и токены пропусков")
+  ' Эрендженова М. (аналитика)
+  Container(etl_service, "Сервис загрузки данных (ETL)", "Python 3.12 / Airflow, pandas", "etl_event_consumer, etl_dq_validator, etl_mart_loader")
+  ContainerDb(dwh, "Аналитическое хранилище и витрины", "ClickHouse", "fact_payments, mart_revenue")
+}
+
+' --- Этап 1. Заказ и платёж (синхронно, на нашей стороне не более 2 с, P-03) ---
+Rel(client, mobile_app, "Нажимает «Оплатить» на экране тарифа", "Android / iOS")
+Rel(mobile_app, api_gateway, "POST /api/v1/orders {tariff_id}, заголовок Idempotency-Key", "HTTPS/JSON, TCP 443")
+Rel(api_gateway, auth_service, "gw_authcheck: подзапрос GET /auth/verify, ответ 200 с X-User-Id, X-User-Role", "HTTP/JSON, TCP 8001")
+Rel(api_gateway, core_api, "gw_router: проксирует создание заказа", "HTTP/JSON, TCP 8000")
+Rel(core_api, database, "TariffService.quote(): цена и комиссия; create_order(): заказ со статусом pending", "SQL/TCP, TCP 5432")
+Rel(core_api, message_broker, "Публикует order.created", "AMQP, TCP 5672")
+Rel(mobile_app, api_gateway, "POST /api/v1/orders/{order_id}/payments", "HTTPS/JSON, TCP 443")
+Rel(api_gateway, core_api, "Проксирует создание платежа (токен проверен так же, как в шаге 3)", "HTTP/JSON, TCP 8000")
+Rel(core_api, integration_service, "POST /internal/payments, контракт PaymentSplit", "HTTP/JSON, TCP 8002")
+Rel(integration_service, database, "Сохраняет платёж и ключ идемпотентности", "SQL/TCP, TCP 5432")
+Rel(integration_service, payment_gateway, "Создаёт платёж со сплитом, получает confirmation_token", "HTTPS/REST")
+Rel(mobile_app, payment_gateway, "mob_payment_adapter: данные карты через SDK, 3-D Secure", "HTTPS/JSON, SDK")
+
+' --- Этап 2. Результат оплаты (асинхронно) ---
+Rel(payment_gateway, api_gateway, "POST /webhooks/payments: платёж успешен", "HTTPS/JSON, TCP 443")
+Rel(api_gateway, integration_service, "gw_partner: проксирует webhook с адреса эквайера", "HTTP/JSON, TCP 8002")
+Rel(integration_service, database, "Проверяет подпись и ключ идемпотентности, ставит статус «оплачен» один раз (R-04)", "SQL/TCP, TCP 5432")
+Rel(integration_service, message_broker, "Публикует payment.succeeded", "AMQP, TCP 5672")
+Rel(message_broker, core_api, "Доставляет payment.succeeded из очереди core_api", "AMQP, TCP 5672")
+Rel(core_api, database, "activate_subscription(): абонемент активен", "SQL/TCP, TCP 5432")
+Rel(core_api, message_broker, "Публикует subscription.activated", "AMQP, TCP 5672")
+
+' --- Этап 3. Подписчики ---
+Rel(message_broker, iot_service, "Доставляет subscription.activated из очереди iot_service", "AMQP, TCP 5672")
+Rel(iot_service, cache, "iot_pass_service: признак активного пропуска абонемента", "RESP/TCP, TCP 6379")
+Rel(message_broker, integration_service, "Доставляет subscription.activated из очереди integration_service", "AMQP, TCP 5672")
+Rel(integration_service, notification_gateway, "int_notification_service: push «Абонемент активирован»", "HTTPS/REST")
+Rel(notification_gateway, mobile_app, "Доставляет push на устройство", "FCM / APNs")
+Rel(message_broker, etl_service, "Доставляет payment.succeeded из очереди etl_service", "AMQP, TCP 5672")
+Rel(etl_service, dwh, "DataQualityValidator.validate() (sum_equals), затем запись в fact_payments", "HTTP, TCP 8123")
+
+' --- Этап 4. Выпуск QR-пропуска (токен 60 с, F-08) ---
+Rel(mobile_app, api_gateway, "mob_pass_service: POST /api/v1/access/passes", "HTTPS/JSON, TCP 443")
+Rel(api_gateway, iot_service, "Проксирует выпуск токена пропуска", "HTTP/JSON, TCP 8004")
+Rel(iot_service, cache, "Проверяет признак активности, сохраняет токен с TTL 60 с", "RESP/TCP, TCP 6379")
+
+@enduml
