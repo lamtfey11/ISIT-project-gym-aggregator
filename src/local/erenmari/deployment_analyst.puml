@@ -1,0 +1,51 @@
+@startuml deployment_analyst
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Deployment.puml
+
+LAYOUT_LEFT_RIGHT()
+title Сегмент диаграммы развёртывания (локальное представление, аналитика): etl_service, analytics_service, dwh
+
+Deployment_Node(yc, "Yandex Cloud, ru-central1", "VPC fitagg-prod") {
+  Deployment_Node(edge, "edge-1 (публичная подсеть)", "Ubuntu 24.04 LTS VM") {
+    Container(api_gateway, "API-шлюз", "Nginx", "Маршруты /api/v1/reports/ и /bi/")
+  }
+  Deployment_Node(app_net, "Приватная подсеть приложений", "sg-app") {
+    Deployment_Node(app, "app-1, app-2 (x2)", "Ubuntu 24.04 LTS VM, Docker Compose") {
+      Container(analytics_service, "Сервис отчётности", "FastAPI :8003, pandas", "Без состояния: файлы в MinIO, данные в ClickHouse")
+    }
+    Deployment_Node(etl_vm, "etl-1", "Ubuntu 24.04 LTS VM, 4 vCPU / 8 GB, Docker Compose") {
+      Container(etl_service, "Сервис загрузки данных (ETL)", "Airflow 2: scheduler + LocalExecutor, pandas", "Один экземпляр; метаданные Airflow в отдельной базе airflow на db-1")
+    }
+  }
+  Deployment_Node(data, "Приватная подсеть данных", "sg-data") {
+    Deployment_Node(dwh_vm, "dwh-1", "Ubuntu 24.04 LTS VM, 4 vCPU / 16 GB") {
+      ContainerDb(dwh, "Аналитическое хранилище и витрины", "ClickHouse 24", "Пользователи: etl_writer, rep_reader, bi_reader (только чтение)")
+    }
+    Deployment_Node(db1, "db-1 (Master)", "PostgreSQL 16") {
+      ContainerDb(database, "Реляционная СУБД", "PostgreSQL 16", "Справочники и реестр выплат; пользователь etl_reader")
+    }
+    Deployment_Node(infra, "infra-1", "Docker Compose") {
+      ContainerQueue(message_broker, "Брокер сообщений", "RabbitMQ 3.13", "Очередь etl.events")
+      ContainerDb(object_storage, "Объектное хранилище", "MinIO", "Бакет reports")
+    }
+  }
+}
+Deployment_Node(office, "Офис компании-оператора", "VPN-шлюз облака (IPsec)") {
+  System_Ext(accounting_system, "Система бухгалтерского учёта", "1С:Бухгалтерия, HTTP-сервисы 1С")
+}
+Deployment_Node(internet, "Внешние провайдеры", "Интернет") {
+  System_Ext(bi_platform, "BI-платформа", "Yandex DataLens")
+}
+
+Rel(bi_platform, api_gateway, "Запросы дашбордов", "HTTPS / TLS 1.3, порт 443")
+Rel(api_gateway, dwh, "Запросы BI от bi_reader", "HTTP, порт 8123")
+Rel(api_gateway, analytics_service, "Запросы отчётности", "HTTP/JSON, порт 8003")
+Rel(etl_service, database, "Инкрементальная выгрузка справочников и реестра выплат", "SQL/TCP + TLS, порт 5432")
+Rel(etl_service, message_broker, "Пачки доменных событий", "AMQP, порт 5672")
+Rel(etl_service, dwh, "Загрузка витрин, журнал load_log", "HTTP, порт 8123")
+Rel(analytics_service, dwh, "Аналитические запросы", "HTTP, порт 8123")
+Rel(analytics_service, object_storage, "Файлы отчётов", "HTTPS (S3 API), порт 9000")
+Rel(analytics_service, message_broker, "report.ready", "AMQP, порт 5672")
+Rel(analytics_service, accounting_system, "Реестры начислений и акты", "HTTPS/REST, XML через VPN (IPsec)")
+
+SHOW_LEGEND()
+@enduml

@@ -1,0 +1,51 @@
+@startuml dynamic_analyst
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Dynamic.puml
+
+LAYOUT_WITH_LEGEND()
+title Динамическая диаграмма (локальное представление, аналитика): ежемесячная загрузка реестра выплат в витрину и передача реестра начислений в 1С
+
+Container_Ext(api_gateway, "API-шлюз", "Nginx", "Маршрут /api/v1/reports/")
+ContainerDb_Ext(database, "Реляционная СУБД", "PostgreSQL 16", "Реестр выплат integration_service")
+ContainerDb_Ext(dwh, "Аналитическое хранилище и витрины", "ClickHouse", "mart_payouts, load_log")
+ContainerDb_Ext(object_storage, "Объектное хранилище", "MinIO (S3 API)", "Файлы отчётов")
+ContainerQueue_Ext(message_broker, "Брокер сообщений", "RabbitMQ 3", "report.ready")
+System_Ext(accounting_system, "Система бухгалтерского учёта", "1С:Бухгалтерия")
+
+Container_Boundary(etl_service, "Сервис загрузки данных (etl_service)") {
+  Component(etl_dag_scheduler, "Планировщик загрузок", "Apache Airflow", "DAG monthly_payout_registry, 1-го числа")
+  Component(etl_db_extractor, "Экстрактор справочников и реестра выплат", "SQLAlchemy", "Инкремент по метке")
+  Component(etl_transform_engine, "Модуль преобразования", "pandas", "Типы, дубли")
+  Component(etl_dq_validator, "Модуль контроля качества", "pandas (DataQualityValidator)", "Профиль витрины payouts: strict_batch")
+  Component(etl_mart_loader, "Загрузчик витрин", "clickhouse-connect", "Атомарная запись")
+}
+
+Container_Boundary(analytics_service, "Сервис отчётности (analytics_service)") {
+  Component(rep_controller, "Контроллер отчётности", "FastAPI Router", "POST /api/v1/reports/settlements")
+  Component(rep_settlement_exporter, "Модуль реестров начислений", "lxml", "XML для 1С без пересчёта сумм")
+  Component(rep_mart_repository, "Репозиторий витрин", "clickhouse-connect", "Запросы к витринам")
+  Component(rep_report_builder, "Сборщик отчётов", "openpyxl", "XLSX-реестр")
+  Component(rep_storage_gateway, "Шлюз файлового хранилища", "boto3", "Ссылки на файлы")
+  Component(rep_event_publisher, "Издатель событий", "pika", "report.ready")
+}
+
+Rel(etl_dag_scheduler, dwh, "Читает метку инкремента из load_log", "HTTP, TCP 8123")
+Rel(etl_dag_scheduler, etl_db_extractor, "extract(period)", "Python Call")
+Rel(etl_db_extractor, database, "SELECT payout_registry WHERE period = :period", "SQL/TCP, TCP 5432")
+Rel(etl_db_extractor, etl_transform_engine, "Передаёт реестр выплат", "Python Call")
+Rel(etl_transform_engine, etl_dq_validator, "DataQualityValidator.validate(batch): sum_equals, unique, reference", "Python Call")
+Rel(etl_dq_validator, etl_mart_loader, "Передаёт партию, прошедшую контроль (ValidationReport)", "Python Call")
+Rel(etl_mart_loader, dwh, "INSERT INTO mart_payouts", "HTTP, TCP 8123")
+Rel(etl_mart_loader, etl_dag_scheduler, "Возвращает итог: строки и отбраковки", "Python Call")
+Rel(etl_dag_scheduler, dwh, "Пишет статус запуска в load_log", "HTTP, TCP 8123")
+Rel(api_gateway, rep_controller, "POST /api/v1/reports/settlements {period}", "HTTP/JSON, TCP 8003")
+Rel(rep_controller, rep_settlement_exporter, "export_settlement(period)", "Python Call")
+Rel(rep_settlement_exporter, rep_mart_repository, "payout_registry(period)", "Python Call")
+Rel(rep_mart_repository, dwh, "SELECT FROM mart_payouts", "HTTP, TCP 8123")
+Rel(rep_settlement_exporter, accounting_system, "Передаёт реестр начислений и акты по залам", "HTTPS/REST, XML")
+Rel(rep_controller, rep_report_builder, "build_settlement_xlsx(period)", "Python Call")
+Rel(rep_report_builder, rep_storage_gateway, "save(file) - presigned URL", "Python Call")
+Rel(rep_storage_gateway, object_storage, "PUT reports/settlements/{period}.xlsx", "HTTPS (S3 API), TCP 9000")
+Rel(rep_report_builder, rep_event_publisher, "publish(ReportReady)", "Python Call")
+Rel(rep_event_publisher, message_broker, "Публикует report.ready", "AMQP, TCP 5672")
+
+@enduml
