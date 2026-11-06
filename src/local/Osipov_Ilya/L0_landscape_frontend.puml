@@ -1,0 +1,36 @@
+@startuml L0_landscape_frontend
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Context.puml
+
+LAYOUT_WITH_LEGEND()
+title Диаграмма системного ландшафта (Level 0), локальное представление: frontend (mobile_app, admin_web)
+
+Enterprise_Boundary(platform_company, "ИТ-контур компании-оператора платформы") {
+  Person(platform_operator, "Оператор платформы", "Работает в веб-панели: модерация, обращения, условия размещения")
+  Person(analyst, "Аналитик платформы", "Работает в веб-панели: витрины и регламентные отчёты")
+  System(gym_aggregator, "ИС-агрегатор фитнес-клубов", "Фокус: mobile_app (клиент) и admin_web (рабочие места сотрудников залов и платформы)")
+}
+
+Enterprise_Boundary(partner_gym, "ИТ-контур партнёрского зала") {
+  Person(gym_admin, "Администратор зала", "Работает в веб-панели у стойки; сканирует QR-пропуск ручным сканером")
+}
+
+Person_Ext(client, "Клиент", "Пользуется мобильным приложением на Android или iOS")
+
+System_Ext(app_stores, "Магазины приложений", "RuStore, Google Play, App Store: публикация и обновление мобильного приложения")
+System_Ext(idp, "Провайдер идентификации", "VK ID / Sber ID: вход по OAuth 2.0 PKCE")
+System_Ext(maps_service, "Картографический сервис", "Яндекс Карты / 2ГИС: тайлы и маршруты")
+System_Ext(payment_gateway, "Платёжный шлюз", "Платёжный SDK эквайера: форма оплаты и токенизация карты")
+System_Ext(notification_gateway, "Сервисы доставки уведомлений", "FCM / APNs")
+
+Rel(client, app_stores, "Устанавливает и обновляет приложение", "HTTPS")
+Rel(client, gym_aggregator, "[mobile_app] Ищет зал на карте, покупает абонемент, показывает QR-пропуск", "Android / iOS")
+Rel(gym_admin, gym_aggregator, "[admin_web] Ведёт карточку, сканирует QR-пропуска и отмечает вход и выход", "HTTPS")
+Rel(platform_operator, gym_aggregator, "[admin_web] Модерирует залы и отзывы, обрабатывает обращения", "HTTPS")
+Rel(analyst, gym_aggregator, "[admin_web] Проверяет витрины, задаёт параметры отчётов", "HTTPS")
+Rel(client, idp, "Подтверждает вход на странице провайдера, открытой приложением (OAuth 2.0 PKCE)", "HTTPS")
+Rel(gym_aggregator, idp, "[auth_service] Обменивает код авторизации на подтверждённый профиль", "HTTPS, OAuth 2.0 / OIDC")
+Rel(gym_aggregator, maps_service, "[mobile_app] Загружает тайлы карты и строит маршрут до зала", "HTTPS/JSON")
+Rel(gym_aggregator, payment_gateway, "[mobile_app] Передаёт данные карты в токенизированном виде через SDK", "HTTPS/JSON, SDK")
+Rel(notification_gateway, gym_aggregator, "[mobile_app] Доставляет push-уведомления на устройство", "FCM / APNs")
+
+@enduml
