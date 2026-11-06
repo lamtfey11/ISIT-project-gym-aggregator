@@ -1,0 +1,54 @@
+@startuml deployment_teamlead
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Deployment.puml
+
+LAYOUT_LEFT_RIGHT()
+title Сегмент диаграммы развёртывания (локальное представление, тимлид): integration_service, iot_service, database
+
+Deployment_Node(gym_site, "Партнёрский зал", "Локальная сеть зала") {
+  System_Ext(access_control, "СКУД и датчики залов", "MQTT-клиент, клиентский сертификат зала")
+}
+Deployment_Node(yc, "Yandex Cloud, ru-central1", "VPC fitagg-prod") {
+  Deployment_Node(edge, "edge-1 (публичная подсеть)", "Ubuntu 24.04 LTS VM, sg-edge: 443, 8883") {
+    Container(api_gateway, "API-шлюз", "Nginx", "Соседний контейнер (зона DevOps)")
+    ContainerQueue(mqtt_broker, "MQTT-брокер", "Mosquitto 2.0", "Соседний контейнер; persistent sessions, QoS 1")
+  }
+  Deployment_Node(app, "app-1, app-2 (x2, приватная подсеть)", "Ubuntu 24.04 LTS VM, Docker Compose, sg-app") {
+    Container(integration_service, "Сервис интеграций и уведомлений", "FastAPI :8002, Celery worker; Celery beat только на app-1", "Выплаты залам формирует ровно один планировщик")
+    Container(iot_service, "Сервис допуска и загруженности", "FastAPI :8004, aiomqtt", "Общая подписка $share/iot/gym/+/access: каждое событие получает один экземпляр")
+  }
+  Deployment_Node(data, "Приватная подсеть данных", "sg-data") {
+    Deployment_Node(db1, "db-1 (Master)", "PostgreSQL 16 + PostGIS 3, SSD") {
+      ContainerDb(database, "Реляционная СУБД", "PostgreSQL 16", "wal-g: ежедневная копия и архив WAL в бакет Object Storage")
+    }
+    Deployment_Node(db2, "db-2 (Replica)", "PostgreSQL 16 hot standby") {
+      ContainerDb(database_replica, "Реплика СУБД", "PostgreSQL 16", "Ручное повышение до мастера по регламенту, до 15 мин (R-03)")
+    }
+    Deployment_Node(infra, "infra-1", "Docker Compose") {
+      ContainerDb(cache, "Кэш и хранилище сессий", "Redis 7", "Токены пропусков TTL 60 с")
+      ContainerQueue(message_broker, "Брокер сообщений", "RabbitMQ 3.13", "Очереди integration_service и iot_service")
+    }
+  }
+}
+Deployment_Node(internet, "Внешние провайдеры", "Интернет, выход через NAT-шлюз") {
+  System_Ext(payment_gateway, "Платёжный шлюз", "Эквайринг")
+  System_Ext(notification_gateway, "Сервисы доставки уведомлений", "FCM / APNs, SMS, SMTP")
+  System_Ext(maps_service, "Картографический сервис", "Геокодирование")
+}
+
+Rel(access_control, mqtt_broker, "События прохода, команды допуска (mTLS)", "MQTTS / TLS 1.2+, порт 8883")
+Rel(iot_service, mqtt_broker, "Общая подписка, команды допуска", "MQTT / TCP, порт 1883")
+Rel(api_gateway, iot_service, "Пропуска, сканы и ручные отметки", "HTTP/JSON, порт 8004")
+Rel(api_gateway, integration_service, "Webhook эквайера, регистрация устройств", "HTTP/JSON, порт 8002")
+Rel(payment_gateway, api_gateway, "Webhook статуса платежа", "HTTPS / TLS 1.3, порт 443")
+Rel(integration_service, database, "Платежи, реестр выплат, журнал обмена", "SQL/TCP + TLS, порт 5432")
+Rel(iot_service, database, "Журнал входов и выходов, история загруженности", "SQL/TCP + TLS, порт 5432")
+Rel(database, database_replica, "Потоковая репликация WAL", "TCP, порт 5432")
+Rel(iot_service, cache, "Токены пропусков, индекс загруженности", "RESP/TCP, порт 6379")
+Rel(iot_service, message_broker, "access.passed; subscription.activated, gym.updated", "AMQP, порт 5672")
+Rel(integration_service, message_broker, "payment.*; subscription.*, access.passed, report.ready", "AMQP, порт 5672")
+Rel(integration_service, payment_gateway, "Платежи, возвраты, выплаты", "HTTPS/REST, порт 443")
+Rel(integration_service, notification_gateway, "Push, SMS, e-mail", "HTTPS 443, SMTP/TLS 465")
+Rel(integration_service, maps_service, "Геокодирование", "HTTPS/REST, порт 443")
+
+SHOW_LEGEND()
+@enduml

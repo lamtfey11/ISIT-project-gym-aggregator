@@ -1,0 +1,44 @@
+@startuml dynamic_teamlead
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Dynamic.puml
+
+LAYOUT_WITH_LEGEND()
+title Динамическая диаграмма (локальное представление, тимлид): проход через турникет по QR-пропуску и пересчёт индекса загруженности
+
+Person(client, "Клиент", "Предъявляет QR-пропуск на входе")
+System_Ext(access_control, "СКУД и датчики залов", "Контроллер турникета, клиент MQTT")
+ContainerQueue_Ext(mqtt_broker, "MQTT-брокер", "Eclipse Mosquitto 2.0", "Топики gym/{gym_id}/access и gym/{gym_id}/access/cmd")
+ContainerDb_Ext(cache, "Кэш и хранилище сессий", "Redis 7", "Токены пропусков, индекс загруженности")
+ContainerDb_Ext(database, "Реляционная СУБД", "PostgreSQL 16", "Журнал входов и выходов, параметры залов")
+ContainerQueue_Ext(message_broker, "Брокер сообщений", "RabbitMQ 3", "Доменные события")
+
+Container_Boundary(iot_service, "Сервис допуска и загруженности (iot_service)") {
+  Component(iot_mqtt_client, "Клиент MQTT-брокера", "aiomqtt, asyncio", "Общая подписка $share/iot/gym/+/access")
+  Component(iot_access_service, "Сервис допуска", "Python, asyncio", "Единый учёт входов и выходов")
+  Component(iot_pass_service, "Сервис QR-пропусков", "Python", "Проверка токена и активности пропуска")
+  Component(iot_cache_client, "Клиент кэша", "redis-py (asyncio)", "Токены пропусков и индекс")
+  Component(iot_repository, "Репозиторий учёта посещений", "SQLAlchemy 2.0", "Журнал и параметры залов")
+  Component(iot_occupancy_service, "Сервис индекса загруженности", "Python 3.12 (OccupancyService)", "Стратегия подсчёта на каждый зал")
+  Component(iot_event_bus, "Шина событий", "aio-pika (AMQP)", "Публикует access.passed")
+}
+
+Rel(client, access_control, "Подносит QR-пропуск к считывателю", "QR, оптическое считывание")
+Rel(access_control, mqtt_broker, "PUBLISH gym/{gym_id}/access {token, direction=IN, request_id}, QoS 1", "MQTTS / TLS, порт 8883")
+Rel(mqtt_broker, iot_mqtt_client, "Доставляет сообщение одному экземпляру из общей подписки", "MQTT / TCP, порт 1883")
+Rel(iot_mqtt_client, iot_access_service, "handle_access_request(gym_id, token)", "Python Call")
+Rel(iot_access_service, iot_pass_service, "validate(token, gym_id)", "Python Call")
+Rel(iot_pass_service, iot_cache_client, "get_token(token)", "Python Call")
+Rel(iot_cache_client, cache, "GET pass:token:{token}; GET pass:active:{subscription_id}", "RESP/TCP, TCP 6379")
+Rel(iot_access_service, iot_mqtt_client, "publish_command(gym_id, ALLOW)", "Python Call")
+Rel(iot_mqtt_client, mqtt_broker, "PUBLISH gym/{gym_id}/access/cmd {request_id, decision=allow}, QoS 1", "MQTT / TCP, порт 1883")
+Rel(mqtt_broker, access_control, "Доставляет команду, турникет открывается (шаги 2-10 не более 1 с, P-04)", "MQTTS / TLS, порт 8883")
+Rel(iot_access_service, iot_repository, "save_access_event(direction=IN, source=TURNSTILE, idempotency_key)", "Python Call")
+Rel(iot_repository, database, "INSERT INTO access_events ... ON CONFLICT (idempotency_key) DO NOTHING", "SQL/TCP, TCP 5432")
+Rel(iot_access_service, iot_occupancy_service, "OccupancyService.on_access(OccupancyEvent.from_access_passed(event))", "Python Call")
+Rel(iot_occupancy_service, iot_repository, "GymSettingsStore.get(), AccessEventSource.events_since(), OccupancyHistoryRepository.save()", "Python Call")
+Rel(iot_repository, database, "SELECT параметров зала и журнала за окно наблюдения, INSERT occupancy_history", "SQL/TCP, TCP 5432")
+Rel(iot_occupancy_service, iot_cache_client, "OccupancyPublisher.publish(snapshot)", "Python Call")
+Rel(iot_cache_client, cache, "SET occupancy:{gym_id} {index, visitors, status} (не позже 30 с от прохода, P-05)", "RESP/TCP, TCP 6379")
+Rel(iot_access_service, iot_event_bus, "publish(AccessPassed)", "Python Call")
+Rel(iot_event_bus, message_broker, "Публикует access.passed в fitagg.events (EventEnvelope с event_id)", "AMQP, TCP 5672")
+
+@enduml

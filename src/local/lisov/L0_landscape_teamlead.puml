@@ -1,0 +1,44 @@
+@startuml L0_landscape_teamlead
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Context.puml
+
+LAYOUT_WITH_LEGEND()
+title Диаграмма системного ландшафта (Level 0), локальное представление: тимлид (integration_service, iot_service)
+
+Enterprise_Boundary(platform_company, "ИТ-контур компании-оператора платформы") {
+  Person(platform_operator, "Оператор платформы", "Модерирует залы, настраивает условия размещения и комиссию, оформляет возвраты")
+  Person(accountant, "Бухгалтер платформы", "Сверяет выплаты залам с реестрами начислений")
+  System(gym_aggregator, "ИС-агрегатор фитнес-клубов", "Фокус: integration_service (платежи, выплаты, уведомления, геокодирование) и iot_service (QR-пропуска, учёт входов и выходов, индекс загруженности)")
+  System_Ext(accounting_system, "Система бухгалтерского учёта", "1С:Бухгалтерия: акты и реестры начислений по залам")
+}
+
+Enterprise_Boundary(partner_gym, "ИТ-контур партнёрского зала") {
+  Person(gym_admin, "Администратор зала", "Сканирует QR-пропуска на входе и выходе, если турникета нет; при сбое пропуска отмечает вход и выход вручную")
+  System_Ext(access_control, "СКУД и датчики залов", "Турникет и считыватель QR: проверка пропуска, фиксация входа и выхода")
+}
+
+Person_Ext(client, "Клиент", "Оплачивает абонемент, проходит в зал по QR-пропуску")
+
+Enterprise_Boundary(finance, "Финансовая инфраструктура") {
+  System_Ext(payment_gateway, "Платёжный шлюз", "Банк-эквайер с маркетплейс-схемой: сплит, возвраты, выплаты залам")
+  System_Ext(fiscal_service, "Онлайн-касса и ОФД", "Фискализация оплаты по 54-ФЗ на стороне эквайера")
+}
+
+System_Ext(maps_service, "Картографический сервис", "Яндекс Карты / 2ГИС: геокодирование адресов залов")
+System_Ext(notification_gateway, "Сервисы доставки уведомлений", "FCM / APNs, SMS-шлюз, SMTP-сервер")
+
+Rel(client, gym_aggregator, "Оплачивает абонемент, получает QR-пропуск", "HTTPS/JSON")
+Rel(client, access_control, "Предъявляет QR-пропуск считывателю турникета", "QR, оптическое считывание")
+Rel(access_control, gym_aggregator, "[iot_service] Передаёт запросы валидации пропуска и события прохода, получает команды допуска", "MQTTS / TLS, порт 8883")
+Rel(gym_admin, gym_aggregator, "[iot_service] Передаёт сканы QR-пропусков и ручные отметки входа и выхода", "HTTPS/JSON")
+Rel(platform_operator, gym_aggregator, "[integration_service] Одобряет возвраты по обращениям", "HTTPS/JSON")
+Rel(gym_aggregator, payment_gateway, "[integration_service] Создаёт платёж с разбивкой суммы, оформляет возвраты и ежемесячные выплаты залам", "HTTPS/REST")
+Rel(payment_gateway, gym_aggregator, "[integration_service] Сообщает статус платежа (webhook)", "HTTPS/JSON")
+Rel(payment_gateway, fiscal_service, "Передаёт данные оплаты для чека", "HTTPS/REST")
+Rel(fiscal_service, client, "Направляет электронный чек", "E-mail / SMS")
+Rel(gym_aggregator, maps_service, "[integration_service] Геокодирует адреса залов", "HTTPS/REST")
+Rel(gym_aggregator, notification_gateway, "[integration_service] Передаёт push, SMS и e-mail", "HTTPS/REST, SMTP/TLS 465")
+Rel(notification_gateway, client, "Доставляет уведомления о покупке, визите и окончании абонемента", "FCM/APNs, SMS")
+Rel(gym_aggregator, accounting_system, "Передаёт реестры начислений, построенные из реестра выплат", "HTTPS/REST, XML")
+Rel(accountant, accounting_system, "Сверяет выплаты залам с реестрами", "HTTPS (тонкий клиент 1С)")
+
+@enduml
