@@ -1,0 +1,46 @@
+@startuml deployment_backend
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Deployment.puml
+
+LAYOUT_LEFT_RIGHT()
+title Сегмент диаграммы развёртывания (локальное представление, backend): auth_service и core_api
+
+Deployment_Node(yc, "Yandex Cloud, ru-central1", "VPC fitagg-prod") {
+  Deployment_Node(edge, "edge-1 (публичная подсеть)", "Ubuntu 24.04 LTS VM") {
+    Container(api_gateway, "API-шлюз", "Nginx", "upstream auth_service и core_api: по два экземпляра, least_conn, max_fails=3")
+  }
+  Deployment_Node(app, "app-1, app-2 (x2, приватная подсеть)", "Ubuntu 24.04 LTS VM, Docker Compose, sg-app") {
+    Container(auth_service, "Сервис авторизации", "FastAPI :8001, uvicorn 4 workers", "Без состояния: сессии и отзывы токенов в Redis, ключ подписи JWT из секрета Docker")
+    Container(core_api, "Сервис бизнес-логики", "FastAPI :8000, uvicorn 4 workers", "Без состояния: запись в мастер, геопоиск из реплики и кэша")
+  }
+  Deployment_Node(data, "Приватная подсеть данных", "sg-data") {
+    Deployment_Node(db1, "db-1 (Master)", "PostgreSQL 16 + PostGIS 3") {
+      ContainerDb(database, "Реляционная СУБД", "PostgreSQL 16", "Профили и роли, каталог, тарифы, заказы")
+    }
+    Deployment_Node(db2, "db-2 (Replica)", "PostgreSQL 16 hot standby") {
+      ContainerDb(database_replica, "Реплика СУБД", "PostgreSQL 16", "Чтение каталога и геопоиска (P-01)")
+    }
+    Deployment_Node(infra, "infra-1", "Docker Compose") {
+      ContainerDb(cache, "Кэш и хранилище сессий", "Redis 7", "Сессии, кэш геопоиска")
+      ContainerQueue(message_broker, "Брокер сообщений", "RabbitMQ 3.13", "События заказов и подписок")
+      ContainerDb(object_storage, "Объектное хранилище", "MinIO", "Фотографии залов")
+    }
+  }
+}
+Deployment_Node(internet, "Внешние провайдеры", "Интернет, выход через NAT-шлюз") {
+  System_Ext(idp, "Провайдер идентификации", "VK ID / Sber ID")
+}
+
+Rel(api_gateway, auth_service, "Подзапрос /auth/verify, вход и токены", "HTTP/JSON, порт 8001")
+Rel(api_gateway, core_api, "Каталог, заказы, тарифы, модерация", "HTTP/JSON, порт 8000")
+Rel(auth_service, database, "Профили и роли", "SQL/TCP + TLS, порт 5432")
+Rel(core_api, database, "Запись заказов, тарифов, абонементов", "SQL/TCP + TLS, порт 5432")
+Rel(core_api, database_replica, "Чтение каталога и геозапросы", "SQL/TCP + TLS, порт 5432")
+Rel(database, database_replica, "Потоковая репликация WAL", "TCP, порт 5432")
+Rel(auth_service, cache, "Сессии и отозванные токены", "RESP/TCP, порт 6379")
+Rel(core_api, cache, "Кэш геопоиска, индекс загруженности", "RESP/TCP, порт 6379")
+Rel(core_api, message_broker, "order.created, subscription.*, gym.updated; payment.*, access.passed", "AMQP, порт 5672")
+Rel(core_api, object_storage, "Фотографии залов", "HTTPS (S3 API), порт 9000")
+Rel(auth_service, idp, "Обмен кода авторизации на профиль", "HTTPS, OAuth 2.0 / OIDC, порт 443")
+
+SHOW_LEGEND()
+@enduml

@@ -1,0 +1,32 @@
+@startuml L0_landscape_backend
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Context.puml
+
+LAYOUT_WITH_LEGEND()
+title Диаграмма системного ландшафта (Level 0), локальное представление: backend (auth_service, core_api)
+
+Enterprise_Boundary(platform_company, "ИТ-контур компании-оператора платформы") {
+  Person(platform_operator, "Оператор платформы", "Подключает и модерирует залы и отзывы, настраивает условия размещения и комиссию")
+  System(gym_aggregator, "ИС-агрегатор фитнес-клубов", "Фокус: auth_service (вход, JWT, роли) и core_api (каталог и геопоиск, тарифы, заказы и абонементы, модерация)")
+}
+
+Enterprise_Boundary(partner_gym, "ИТ-контур партнёрского зала") {
+  Person(gym_admin, "Администратор зала", "Ведёт карточку, расписание и тарифы абонементов")
+  System_Ext(gym_crm, "Учётная система зала", "Собственная CRM или 1С:Фитнес клуб: тарифы и клиенты зала вне платформы")
+}
+
+Person_Ext(client, "Клиент", "Входит через VK ID или Sber ID, ищет зал, покупает абонемент")
+
+System_Ext(idp, "Провайдер идентификации", "VK ID / Sber ID: OAuth 2.0 / OIDC")
+System_Ext(fns_egrul, "Сервис проверки контрагентов ФНС", "ЕГРЮЛ / ЕГРИП: реквизиты юрлица или ИП зала")
+System_Ext(payment_gateway, "Платёжный шлюз", "Эквайринг с маркетплейс-схемой")
+
+Rel(client, idp, "Подтверждает вход и согласие на передачу профиля", "HTTPS, OAuth 2.0 / OIDC")
+Rel(client, gym_aggregator, "[core_api] Ищет залы, оформляет заказ абонемента; [auth_service] входит и обновляет токен", "HTTPS/JSON")
+Rel(gym_aggregator, idp, "[auth_service] Обменивает код авторизации на подтверждённый профиль", "HTTPS, OAuth 2.0 / OIDC")
+Rel(gym_admin, gym_aggregator, "[core_api] Ведёт карточку, расписание и тарифы абонементов", "HTTPS/JSON")
+Rel(gym_admin, gym_crm, "Ведёт свою клиентскую базу и кассу (тарифы вносит в платформу вручную)", "HTTPS")
+Rel(platform_operator, gym_aggregator, "[core_api] Модерирует залы и отзывы, задаёт условия размещения и комиссию", "HTTPS/JSON")
+Rel(platform_operator, fns_egrul, "Проверяет реквизиты зала перед одобрением карточки", "HTTPS")
+Rel(gym_aggregator, payment_gateway, "[core_api через сервис интеграций] Запрашивает платёж с готовой разбивкой суммы", "HTTPS/REST")
+
+@enduml
