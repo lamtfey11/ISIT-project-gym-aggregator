@@ -5,12 +5,16 @@ on:
     branches: [main]
     paths:
       - "src/**/*.puml"
-      - ".github/workflows/render_docs.yml"
+      - "README.md"
+      - "tools/check_glossary.py"
+      - ".github/workflows/render-docs.yml"
   pull_request:
     branches: [main]
     paths:
       - "src/**/*.puml"
-      - ".github/workflows/render_docs.yml"
+      - "README.md"
+      - "tools/check_glossary.py"
+      - ".github/workflows/render-docs.yml"
   workflow_dispatch:
 
 permissions:
@@ -60,6 +64,9 @@ jobs:
           fi
           echo "Запрещённых макросов нет"
 
+      - name: Проверить идентификаторы по глоссарию
+        run: python3 tools/check_glossary.py
+
       - name: Проверить синтаксис диаграмм
         run: |
           status=0
@@ -70,11 +77,12 @@ jobs:
               echo "::error file=$file::Синтаксическая ошибка PlantUML. ${detail}"
               status=1
             fi
-          done < <(find "$SRC_DIR" -name '*.puml' -not -path '*/core/*' -not -path "$DICT_DIR/*" -print0)
+          done < <(find "$SRC_DIR" -name '*.puml' -not -path '*/core/*' -not -path "$DICT_DIR/*" -print0 | sort -z)
           exit $status
 
       - name: Отрисовать PNG и SVG
         run: |
+          count=0
           while IFS= read -r -d '' file; do
             rel="${file#"$SRC_DIR"/}"
             out="$OUT_DIR/${rel%.puml}"
@@ -83,7 +91,17 @@ jobs:
             (cd "$dir" && java -jar "$GITHUB_WORKSPACE/plantuml.jar" -tpng -pipe < "$name") > "$out.png"
             (cd "$dir" && java -jar "$GITHUB_WORKSPACE/plantuml.jar" -tsvg -pipe < "$name") > "$out.svg"
             echo "Готово: $out.png, $out.svg"
-          done < <(find "$SRC_DIR" -name '*.puml' -not -path '*/core/*' -not -path "$DICT_DIR/*" -print0)
+            echo "| \`$file\` | \`$out.png\` |" >> rendered.md
+            count=$((count + 1))
+          done < <(find "$SRC_DIR" -name '*.puml' -not -path '*/core/*' -not -path "$DICT_DIR/*" -print0 | sort -z)
+          {
+            echo "### Отрисовано диаграмм: $count"
+            echo ""
+            echo "| Исходник | Изображение |"
+            echo "|---|---|"
+            cat rendered.md
+          } >> "$GITHUB_STEP_SUMMARY"
+          rm rendered.md
 
       - name: Сохранить диаграммы как артефакт сборки
         uses: actions/upload-artifact@v4
