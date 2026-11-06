@@ -1,0 +1,34 @@
+@startuml L0_landscape_analyst
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Context.puml
+
+LAYOUT_WITH_LEGEND()
+title Диаграмма системного ландшафта (Level 0), локальное представление: аналитика (analytics_service, etl_service)
+
+Enterprise_Boundary(platform_company, "ИТ-контур компании-оператора платформы") {
+  Person(analyst, "Аналитик платформы", "Проектирует показатели и витрины, готовит отчёты")
+  Person(platform_operator, "Оператор платформы", "Смотрит сводные показатели по залам")
+  Person(accountant, "Бухгалтер платформы", "Проводит акты и выплаты залам по реестрам")
+  System(gym_aggregator, "ИС-агрегатор фитнес-клубов", "Фокус: etl_service (загрузка событий и справочников в витрины ClickHouse) и analytics_service (показатели, отчёты XLSX и CSV, реестры для 1С)")
+  System_Ext(accounting_system, "Система бухгалтерского учёта", "1С:Бухгалтерия: акты и реестры начислений по залам")
+  System_Ext(bi_platform, "BI-платформа", "Yandex DataLens: дашборды поверх витрин")
+}
+
+Enterprise_Boundary(partner_gym, "ИТ-контур партнёрского зала") {
+  Person(gym_admin, "Администратор зала", "Получает отчёты по загрузке и продажам зала")
+}
+
+System_Ext(web_analytics, "Сервис веб- и мобильной аналитики", "AppMetrica / Яндекс Метрика: источники трафика и конверсия экранов")
+System_Ext(notification_gateway, "Сервисы доставки уведомлений", "SMTP-сервер: доставка отчётов и оповещений")
+
+Rel(analyst, gym_aggregator, "[analytics_service] Задаёт параметры регламентных отчётов", "HTTPS/JSON")
+Rel(platform_operator, gym_aggregator, "[analytics_service] Запрашивает сводные показатели и реестр начислений", "HTTPS/JSON")
+Rel(analyst, bi_platform, "Строит ad-hoc дашборды поверх витрин", "HTTPS")
+Rel(bi_platform, gym_aggregator, "[dwh через API-шлюз] Читает витрины (только чтение)", "SQL over HTTPS")
+Rel(gym_aggregator, accounting_system, "[analytics_service] Передаёт реестры начислений и акты по залам за месяц", "HTTPS/REST, XML")
+Rel(accountant, accounting_system, "Проводит акты и выплаты по реестрам", "HTTPS (тонкий клиент 1С)")
+Rel(analyst, web_analytics, "Сопоставляет поведение в приложении с воронкой покупок (вне MVP)", "HTTPS")
+Rel(gym_aggregator, notification_gateway, "[analytics_service через сервис интеграций] Отправляет готовые отчёты; оповещает о сбое расчёта витрин", "HTTPS/REST, SMTP/TLS")
+Rel(notification_gateway, gym_admin, "Доставляет отчёт по загрузке и продажам зала", "E-mail (SMTP)")
+Rel(notification_gateway, analyst, "Доставляет оповещения о сбое расчёта витрин", "E-mail (SMTP)")
+
+@enduml
