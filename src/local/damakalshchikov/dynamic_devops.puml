@@ -1,0 +1,47 @@
+@startuml dynamic_devops
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Dynamic.puml
+
+LAYOUT_WITH_LEGEND()
+title Динамическая диаграмма (локальное представление, DevOps): запрос через API-шлюз, сбой upstream и оповещение DevOps-инженера
+
+Container_Ext(mobile_app, "Мобильное приложение клиента", "React Native", "Запрос геопоиска")
+Container_Ext(auth_service, "Сервис авторизации", "FastAPI", "GET /auth/verify")
+Container_Ext(core_api, "Сервис бизнес-логики", "FastAPI", "Отвечает 502/503 при сбое")
+System_Ext(notification_gateway, "Сервисы доставки уведомлений", "SMTP-сервер")
+Person(devops, "DevOps-инженер", "Разбирает инцидент")
+
+Container_Boundary(api_gateway, "API-шлюз (api_gateway)") {
+  Component(gw_tls, "Модуль проверки TLS", "Nginx ssl, HTTP/2", "Порт 443, TLS 1.3")
+  Component(gw_ratelimit, "Модуль ограничения нагрузки", "Nginx njs (RateLimiter)", "Политика user_api: sliding_window 120 / 60 с")
+  Component(gw_authcheck, "Модуль проверки доступа", "Nginx auth_request", "Подзапрос /auth/verify")
+  Component(gw_router, "Модуль маршрутизации", "Nginx upstream", "Префикс пути -> сервис")
+  Component(gw_metrics, "Модуль метрик", "nginx-module-vts", "/metrics")
+}
+
+Container_Boundary(monitoring, "Система наблюдаемости (monitoring)") {
+  Component(mon_scraper, "Сборщик метрик", "Prometheus", "Опрос каждые 15 с")
+  Component(mon_tsdb, "Хранилище метрик", "Prometheus TSDB", "15 дней")
+  Component(mon_rules, "Движок правил", "Prometheus rule manager", "GatewayUpstream5xx")
+  Component(mon_alerting, "Маршрутизатор оповещений", "Alertmanager", "Группировка, подавление повторов")
+  Component(mon_dashboards, "Панели визуализации", "Grafana", "Панель «API-шлюз»")
+  Component(mon_log_store, "Хранилище логов", "Loki", "Журналы доступа")
+}
+
+Rel(mobile_app, gw_tls, "GET /api/v1/gyms?lat=..&lon=..", "HTTPS/JSON, TLS 1.3, TCP 443")
+Rel(gw_tls, gw_ratelimit, "js_content gw.handle -> RateLimiter.check(request)", "Фаза обработки Nginx")
+Rel(gw_ratelimit, gw_authcheck, "В пределах лимита: внутренний переход в @user_api", "Фаза обработки Nginx")
+Rel(gw_authcheck, auth_service, "auth_request /_auth_verify -> GET /auth/verify", "HTTP/JSON, TCP 8001")
+Rel(gw_authcheck, gw_router, "Запрос с X-User-Id, X-User-Role", "Фаза обработки Nginx")
+Rel(gw_router, core_api, "proxy_pass upstream core_api (2 экземпляра, least_conn)", "HTTP/JSON, TCP 8000")
+Rel(gw_router, gw_metrics, "Код ответа 502 и upstream_response_time", "Фаза журналирования Nginx")
+Rel(mon_scraper, gw_metrics, "GET /metrics", "HTTP")
+Rel(mon_scraper, mon_tsdb, "Записывает отсчёты", "Go Call")
+Rel(mon_rules, mon_tsdb, "Доля 5xx upstream core_api больше 5 % за 5 мин", "Go Call")
+Rel(mon_rules, mon_alerting, "POST /api/v2/alerts GatewayUpstream5xx, severity=critical", "HTTP/JSON, TCP 9093")
+Rel(mon_alerting, notification_gateway, "Письмо об инциденте напрямую, минуя сервис интеграций", "SMTP/TLS, TCP 465")
+Rel(notification_gateway, devops, "Доставляет оповещение", "E-mail (SMTP)")
+Rel(devops, mon_dashboards, "Открывает панель «API-шлюз» через VPN-шлюз облака", "HTTPS, TCP 3000")
+Rel(mon_dashboards, mon_tsdb, "PromQL: rate(nginx_vts_upstream_requests_total{code=5xx}[5m])", "HTTP, TCP 9090")
+Rel(mon_dashboards, mon_log_store, "LogQL: журнал доступа шлюза по upstream core_api", "HTTP, TCP 3100")
+
+@enduml

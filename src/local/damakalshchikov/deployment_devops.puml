@@ -1,0 +1,59 @@
+@startuml deployment_devops
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Deployment.puml
+
+LAYOUT_LEFT_RIGHT()
+title Сегмент диаграммы развёртывания (локальное представление, DevOps): api_gateway, monitoring, брокеры, кэш, хранилище
+
+Deployment_Node(clients, "Клиенты в Интернете", "Смартфоны, браузеры, эквайер, BI") {
+  System_Ext(payment_gateway, "Платёжный шлюз", "Источник webhook")
+}
+Deployment_Node(gym_site, "Партнёрский зал", "Локальная сеть зала") {
+  System_Ext(access_control, "СКУД и датчики залов", "MQTT-клиент с сертификатом зала")
+}
+Deployment_Node(yc, "Yandex Cloud, ru-central1", "VPC fitagg-prod, NAT-шлюз для исходящих, VPN-шлюз (IPsec) для офиса") {
+  Deployment_Node(dmz, "Публичная подсеть 10.10.1.0/24", "sg-edge: входящие 443/TCP, 8883/TCP; остальное запрещено") {
+    Deployment_Node(edge, "edge-1", "Ubuntu 24.04 LTS VM, 2 vCPU / 4 GB, Docker Engine, статический публичный IP") {
+      Container(api_gateway, "API-шлюз", "Nginx 1.27 + njs", "TLS 1.3, HTTP/2; limit_conn 50 на IP; js_shared_dict_zone ratelimit 8m")
+      ContainerQueue(mqtt_broker, "MQTT-брокер", "Eclipse Mosquitto 2.0", "listener 8883 (TLS, require_certificate) и 1883 (только 10.10.2.0/24)")
+    }
+  }
+  Deployment_Node(app_net, "Приватная подсеть приложений 10.10.2.0/24", "sg-app") {
+    Deployment_Node(app, "app-1, app-2 (x2)", "Docker Compose") {
+      Container(core_api, "Сервис бизнес-логики", "FastAPI :8000", "Пример upstream; так же auth :8001, integration :8002, analytics :8003, iot :8004")
+    }
+    Deployment_Node(mon_vm, "mon-1", "Ubuntu 24.04 LTS VM, 2 vCPU / 8 GB, Docker Compose") {
+      Container(monitoring, "Система наблюдаемости", "Prometheus :9090, Alertmanager :9093, Grafana :3000, Loki :3100", "Агент Grafana Alloy на каждой ВМ отправляет логи в Loki")
+    }
+  }
+  Deployment_Node(data_net, "Приватная подсеть данных 10.10.3.0/24", "sg-data") {
+    Deployment_Node(infra, "infra-1", "Ubuntu 24.04 LTS VM, 4 vCPU / 8 GB, Docker Compose") {
+      ContainerDb(cache, "Кэш и хранилище сессий", "Redis 7", "requirepass, AOF")
+      ContainerQueue(message_broker, "Брокер сообщений", "RabbitMQ 3.13", "Плагин Prometheus :15692")
+      ContainerDb(object_storage, "Объектное хранилище", "MinIO", "Зеркало в бакет резервных копий раз в сутки")
+    }
+  }
+}
+Deployment_Node(office, "Офис компании-оператора", "Подключение через VPN-шлюз облака") {
+  Person(devops, "DevOps-инженер", "Ноутбук с VPN-клиентом")
+}
+Deployment_Node(internet, "Внешние сервисы", "Интернет") {
+  System_Ext(notification_gateway, "Сервисы доставки уведомлений", "SMTP-сервер")
+  System_Ext(ci_cd, "Платформа разработки и CI/CD", "GitHub Actions, GHCR")
+}
+
+Rel(payment_gateway, api_gateway, "Webhook (allowlist адресов эквайера)", "HTTPS / TLS 1.3, порт 443")
+Rel(access_control, mqtt_broker, "События прохода (mTLS)", "MQTTS / TLS 1.2+, порт 8883")
+Rel(api_gateway, core_api, "Проксирование upstream, проверки max_fails=3 fail_timeout=10s", "HTTP/JSON, порты 8000-8004")
+Rel(monitoring, api_gateway, "Метрики шлюза (nginx-module-vts)", "HTTP GET /metrics")
+Rel(monitoring, core_api, "Метрики сервисов", "HTTP GET /metrics")
+Rel(monitoring, message_broker, "Метрики очередей", "HTTP GET /metrics, порт 15692")
+Rel(monitoring, notification_gateway, "Оповещения об инцидентах", "SMTP/TLS, порт 465")
+Rel(devops, monitoring, "Панели Grafana и поиск по логам", "HTTPS, порт 3000 через VPN (IPsec)")
+Rel(edge, ci_cd, "Скачивает образы релиза (так же app-1, app-2, etl-1, mon-1, infra-1)", "HTTPS, порт 443 через NAT-шлюз")
+Rel(devops, edge, "Запускает docker compose pull и up на ВМ", "SSH, порт 22, только через VPN (IPsec)")
+Rel(core_api, cache, "Кэш и сессии", "RESP/TCP, порт 6379")
+Rel(core_api, message_broker, "Доменные события", "AMQP, порт 5672")
+Rel(core_api, object_storage, "Файлы", "HTTPS (S3 API), порт 9000")
+
+SHOW_LEGEND()
+@enduml

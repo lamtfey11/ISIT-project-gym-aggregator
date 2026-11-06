@@ -1,0 +1,35 @@
+@startuml L0_landscape_devops
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Context.puml
+
+LAYOUT_WITH_LEGEND()
+title Диаграмма системного ландшафта (Level 0), локальное представление: DevOps (api_gateway, monitoring)
+
+Enterprise_Boundary(platform_company, "ИТ-контур компании-оператора платформы") {
+  Person(devops, "DevOps-инженер", "Выпускает релизы, следит за доступностью, реагирует на инциденты")
+  System(gym_aggregator, "ИС-агрегатор фитнес-клубов", "Фокус: api_gateway (единственный вход по 443) и monitoring (метрики, логи, оповещения); наружу открыты только 443 и 8883")
+  System_Ext(ci_cd, "Платформа разработки и CI/CD", "GitHub: репозиторий, Actions, реестр образов GHCR")
+  System_Ext(bi_platform, "BI-платформа", "Yandex DataLens")
+}
+
+Enterprise_Boundary(partner_gym, "ИТ-контур партнёрского зала") {
+  System_Ext(access_control, "СКУД и датчики залов", "Контроллеры турникетов, клиенты MQTT")
+}
+
+System_Ext(cloud_provider, "Облачный провайдер", "Yandex Cloud, регион ru-central1: ВМ, VPC, группы безопасности, бакет резервных копий")
+System_Ext(cert_authority, "Удостоверяющий центр", "Let's Encrypt: выпуск и продление TLS-сертификатов по ACME")
+System_Ext(payment_gateway, "Платёжный шлюз", "Источник webhook о статусе платежа")
+System_Ext(notification_gateway, "Сервисы доставки уведомлений", "SMTP-сервер")
+
+Rel(devops, ci_cd, "Ведёт workflow, запускает выпуск релиза", "HTTPS, Git over SSH")
+Rel(gym_aggregator, ci_cd, "Скачивает образы контейнеров нового релиза из GHCR", "Docker Registry API over HTTPS")
+Rel(devops, gym_aggregator, "Запускает обновление на ВМ (docker compose pull и up) через VPN-шлюз облака", "SSH, порт 22")
+Rel(devops, gym_aggregator, "[monitoring] Смотрит панели Grafana и логи через VPN-шлюз облака", "HTTPS, TCP 3000")
+Rel(gym_aggregator, cloud_provider, "Размещается на ВМ провайдера, сохраняет резервные копии СУБД и файлов", "HTTPS (S3 API)")
+Rel(gym_aggregator, cert_authority, "[api_gateway] Продлевает TLS-сертификат домена", "ACME / HTTPS")
+Rel(payment_gateway, gym_aggregator, "[api_gateway] Передаёт webhook, пропускается по списку адресов эквайера", "HTTPS/JSON, TCP 443")
+Rel(bi_platform, gym_aggregator, "[api_gateway] Читает витрины, только чтение", "SQL over HTTPS, TCP 443")
+Rel(access_control, gym_aggregator, "[mqtt_broker] Публикует события прохода", "MQTTS / TLS, порт 8883")
+Rel(gym_aggregator, notification_gateway, "[monitoring] Отправляет оповещения об инцидентах напрямую", "SMTP/TLS, TCP 465")
+Rel(notification_gateway, devops, "Доставляет оповещения об инцидентах", "E-mail (SMTP)")
+
+@enduml
