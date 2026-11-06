@@ -56,6 +56,7 @@ Rel(adm_gym_profile_controller, adm_file_service, "Передаёт фотогр
 Rel(adm_gym_profile_controller, adm_state_store, "Сохраняет и читает черновик карточки зала и справочники", "TypeScript Call")
 
 Rel(adm_access_controller, adm_api_client, "Отправляет скан QR-пропуска или ручную отметку входа и выхода", "TypeScript Call")
+Rel(adm_access_controller, adm_state_store, "Сохраняет очередь выходов без связи и ленту отметок у стойки", "TypeScript Call")
 
 Rel(adm_moderation_controller, adm_api_client, "Запрашивает очередь модерации и обращений, отправляет вердикты, условия размещения и заявки на возврат", "TypeScript Call")
 Rel(adm_moderation_controller, adm_state_store, "Сохраняет и читает фильтры и кэш очереди модерации", "TypeScript Call")

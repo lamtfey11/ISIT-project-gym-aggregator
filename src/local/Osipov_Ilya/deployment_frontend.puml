@@ -1,0 +1,41 @@
+@startuml deployment_frontend
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Deployment.puml
+
+LAYOUT_LEFT_RIGHT()
+title Сегмент диаграммы развёртывания (локальное представление, frontend): mobile_app и admin_web
+
+Deployment_Node(phone, "Смартфон клиента", "Android 9+ / iOS 15+") {
+  Container(mobile_app, "Мобильное приложение клиента", "React Native 0.74 / TypeScript", "Сборки .aab и .ipa из CI; токены в Keychain / Keystore")
+}
+Deployment_Node(desk, "Стойка администратора зала", "ПК + ручной сканер QR (USB или Bluetooth, режим HID)") {
+  Deployment_Node(browser, "Браузер", "Chrome / Яндекс Браузер") {
+    Container(admin_web, "Веб-панель администрирования", "React 18 SPA, сборка Vite", "Очередь выходов без связи в состоянии вкладки")
+  }
+}
+Deployment_Node(office_pc, "Рабочее место сотрудника платформы", "ПК в офисе") {
+  Deployment_Node(browser2, "Браузер", "Chrome / Firefox") {
+    Container(admin_web_office, "Веб-панель администрирования", "React 18 SPA", "Тот же бандл; разделы по роли оператора или аналитика")
+  }
+}
+Deployment_Node(yc, "Yandex Cloud, ru-central1", "VPC fitagg-prod") {
+  Deployment_Node(edge, "edge-1 (публичная подсеть)", "Ubuntu 24.04 LTS VM, sg-edge: 443, 8883") {
+    Container(api_gateway, "API-шлюз", "Nginx", "location /admin/: статика SPA с кэшированием; /api/: API")
+  }
+}
+Deployment_Node(internet, "Внешние провайдеры", "Интернет") {
+  System_Ext(app_stores, "Магазины приложений", "RuStore, Google Play, App Store")
+  System_Ext(payment_gateway, "Платёжный шлюз", "Платёжный SDK")
+  System_Ext(maps_service, "Картографический сервис", "Тайлы и маршруты")
+  System_Ext(notification_gateway, "Сервисы доставки уведомлений", "FCM / APNs")
+}
+
+Rel(app_stores, mobile_app, "Установка и обновление сборки", "HTTPS, порт 443")
+Rel(mobile_app, api_gateway, "REST API", "HTTPS / TLS 1.3, порт 443")
+Rel(admin_web, api_gateway, "Загрузка SPA, REST API, сканы QR", "HTTPS / TLS 1.3, порт 443")
+Rel(admin_web_office, api_gateway, "Загрузка SPA, REST API", "HTTPS / TLS 1.3, порт 443")
+Rel(mobile_app, payment_gateway, "Данные карты через SDK, минуя наш сервер", "HTTPS, порт 443")
+Rel(mobile_app, maps_service, "Тайлы карты и маршруты", "HTTPS, порт 443")
+Rel(notification_gateway, mobile_app, "Push-уведомления", "FCM / APNs, TLS")
+
+SHOW_LEGEND()
+@enduml

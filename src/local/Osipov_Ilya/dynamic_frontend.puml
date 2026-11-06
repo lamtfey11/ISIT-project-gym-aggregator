@@ -1,0 +1,40 @@
+@startuml dynamic_frontend
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Dynamic.puml
+
+LAYOUT_WITH_LEGEND()
+title Динамическая диаграмма (локальное представление, frontend): QR-пропуск в приложении и отметка входа сканером у стойки зала без турникета
+
+Person(client, "Клиент", "Показывает QR-пропуск на экране")
+Person(gym_admin, "Администратор зала", "Сканирует QR ручным сканером (HID)")
+Container_Ext(api_gateway, "API-шлюз", "Nginx", "Политика access_marks: token_bucket")
+
+Container_Boundary(mobile_app, "Мобильное приложение клиента (mobile_app)") {
+  Component(mob_ui_shell, "UI-слой и навигация", "React Native", "Экран «Пропуск»")
+  Component(mob_pass_service, "Сервис электронного пропуска", "TypeScript", "Токен 60 с, QR-код")
+  Component(mob_api_client, "Клиент API-шлюза", "Axios", "Единственная точка обмена")
+  Component(mob_secure_store, "Защищённое хранилище", "MMKV, Keychain / Keystore", "Токены")
+}
+
+Container_Boundary(admin_web, "Веб-панель администрирования (admin_web)") {
+  Component(adm_ui_shell, "Каркас SPA", "React 18", "Поле ввода сканера")
+  Component(adm_access_controller, "Контроллер допуска", "TypeScript (AccessController)", "Стратегии MarkModeStrategy и DeliveryPolicy")
+  Component(adm_api_client, "Клиент API-шлюза", "Axios", "Реализует порт AccessApi")
+  Component(adm_state_store, "Клиентское состояние", "Redux Toolkit", "Лента отметок и очередь выходов")
+}
+
+Rel(client, mob_ui_shell, "Открывает экран «Пропуск»", "Android / iOS")
+Rel(mob_ui_shell, mob_pass_service, "getActivePass()", "TypeScript Call")
+Rel(mob_pass_service, mob_api_client, "post('/api/v1/access/passes', {subscriptionId}, idempotencyKey)", "TypeScript Call")
+Rel(mob_api_client, api_gateway, "POST /api/v1/access/passes", "HTTPS/JSON, TCP 443")
+Rel(mob_pass_service, mob_secure_store, "setSecure('passToken', {token, expiresAt}); QR обновляется до истечения 60 с", "TypeScript Call")
+Rel(gym_admin, adm_ui_shell, "Сканер вводит строку QR и Enter в поле отметки", "USB / Bluetooth HID (клавиатура)")
+Rel(adm_ui_shell, adm_access_controller, "AccessController.submit({raw, direction: IN}) в режиме scan", "TypeScript Call")
+Rel(adm_access_controller, adm_state_store, "dispatch(access/markSubmitted)", "TypeScript Call")
+Rel(adm_access_controller, adm_api_client, "DeliveryPolicy.deliver(): AccessApi.mark(AdminAccessMarkRequest{method: SCAN, idempotency_key})", "TypeScript Call")
+Rel(adm_api_client, adm_state_store, "Читает access-токен сотрудника", "TypeScript Call")
+Rel(adm_api_client, api_gateway, "POST /api/v1/access/marks", "HTTPS/JSON, TCP 443")
+Rel(api_gateway, adm_api_client, "200 AccessMarkResult{decision} или 429 RateLimitedError + Retry-After", "HTTPS/JSON, TCP 443")
+Rel(adm_access_controller, adm_state_store, "dispatch(access/markFinished): итог в ленте отметок", "TypeScript Call")
+Rel(adm_ui_shell, gym_admin, "Показывает «Проход разрешён» или причину отказа", "HTTPS")
+
+@enduml

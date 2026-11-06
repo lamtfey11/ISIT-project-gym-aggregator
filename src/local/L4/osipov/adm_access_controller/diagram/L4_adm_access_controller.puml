@@ -9,7 +9,7 @@ hide empty members
 left to right direction
 
 package "Контракты на стыках (contracts/ts)" <<Frame>> {
-  interface AdminAccessMarkRequest <<contract admin_web → iot_service>> {
+  interface AdminAccessMarkRequest <<contract admin_web - iot_service>> {
     +gym_id: string
     +method: MarkMethod
     +direction: Direction
